@@ -19,7 +19,13 @@
 # SCOPE OF THE LINT EXEMPTION (intentional, not a silent skip):
 # The "Report Lint status" / "Report Lint SKILL.md files status" steps below
 # post pre-computed `success` commit statuses instead of running the real
-# lint jobs. This is deliberate and bounded by TWO conditions, both enforced
+# lint jobs. They use the contexts `Lint (release PR)` and
+# `Lint SKILL.md files (release PR)` — NOT the ci.yml job names. GitHub keys a
+# check by context name and surfaces the newest posting, and ci.yml sets
+# `concurrency.cancel-in-progress: true`, so if a cancelled real run left no
+# status behind, a same-named `success` here would stand in for a lint gate
+# that never ran. Distinct names keep the two signals independent.
+# This is deliberate and bounded by TWO conditions, both enforced
 # in the workflow body rather than asserted only in this comment:
 #   - The head branch name starts with `release-please--` (job-level `if`),
 #     AND
@@ -140,6 +146,18 @@ jobs:
       # comment above; the "Validate release PR files" step is what makes
       # this safe — it hard-fails if the PR touches anything outside the
       # release-file allowlist.
+      #
+      # The contexts are deliberately NOT named `Lint` / `Lint SKILL.md files`.
+      # GitHub keys a status check by context name and shows the newest
+      # posting, and `ci.yml` sets `concurrency.cancel-in-progress: true`:
+      # when successive pushes to a release branch cancel the real run mid
+      # flight, a same-named `success` posted here would be the only status
+      # left on the check. Because both lint jobs are required checks, that
+      # residue could mark a PR mergeable that never actually passed lint.
+      # Keeping a distinct context name makes the two signals independent —
+      # the real run can never be masked, and this exemption stays visible
+      # as its own line rather than impersonating the gate it replaces.
+      # Do NOT rename these back to the ci.yml job names.
       - name: Report Lint status
         if: steps.release-meta.outputs.noop == 'false'
         uses: actions/github-script@v9
@@ -150,7 +168,7 @@ jobs:
               repo: context.repo.repo,
               sha: context.payload.pull_request.head.sha,
               state: 'success',
-              context: 'Lint',
+              context: 'Lint (release PR)',
               description: 'Release PR — lint not required for version/changelog changes',
               target_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             });
@@ -165,7 +183,7 @@ jobs:
               repo: context.repo.repo,
               sha: context.payload.pull_request.head.sha,
               state: 'success',
-              context: 'Lint SKILL.md files',
+              context: 'Lint SKILL.md files (release PR)',
               description: 'Release PR — skill lint not required for version/changelog changes',
               target_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             });

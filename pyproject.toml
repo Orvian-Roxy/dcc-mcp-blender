@@ -44,7 +44,11 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-mock>=3.0",
-    "ruff>=0.8.0",
+    # Upper bound matches the pinned install in .github/workflows/ci.yml: the
+    # lint job is a required check, so an unbounded pre-1.0 ruff can turn a
+    # minor upstream release into a repo-wide merge blocker. Bump both
+    # together after checking the new minor against this tree.
+    "ruff>=0.8.0,<0.18",
     "pyyaml>=5.0",
 ]
 

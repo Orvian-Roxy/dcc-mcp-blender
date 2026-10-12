@@ -148,6 +148,18 @@ falls through to regular CI. The changed files must additionally fall inside
 the release allowlist in that workflow; widening the allowlist widens the
 exemption. See the workflow header comment for the full rationale.
 
+Those two statuses use the contexts `Lint (release PR)` and
+`Lint SKILL.md files (release PR)`, **not** the `ci.yml` job names. GitHub keys
+a check by context name and shows the newest posting, and `ci.yml` sets
+`concurrency.cancel-in-progress: true` — so reusing the real job names would let
+a cancelled real run leave this pre-computed `success` as the only status on a
+required check. Never rename them back.
+
+The lint jobs install a bounded ruff (`>=0.8.0,<0.18`, mirrored in the `dev`
+extra of `pyproject.toml`). Ruff is pre-1.0 and the gate is required, so an
+unbounded pin would let an upstream minor turn "we changed nothing" into a
+repo-wide merge blocker. Bump both bounds together.
+
 ## Do / Don't
 
 - **Do** single-source agent instructions here. This is the only agent contract
