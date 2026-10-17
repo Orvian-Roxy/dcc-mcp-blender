@@ -2,16 +2,21 @@
 
 DCC 是主开发项目。当前开发基于 adapter 0.2.21，验收固定 Core、server 和 CLI 0.20.45。此 checkout 的实现和私有 NPR 验收从未切换生产 MCP。迁移范围见 [Spec #14](https://github.com/Orvian-Roxy/blender-mcp-runtime/issues/14)。
 
+当前 MMD 目标按用户最新指令收敛为 MMD Tools 4.5.11 的 native API1 适配包，配套 NPR alpha.4。它已经包含原 MMR 的原生碰撞构建能力，不需要启用 MMR 插件。此前官方 MMD Tools 4.5.14 的隔离结果属于旧基线，不能代替此适配包的验证。
+
 ## 谁负责什么
 
 | 内容 | 归属 |
 | --- | --- |
 | 实例路由、主线程执行、插件管理、RNA 和节点工具 | DCC adapter。沿用上游 Core、server 和 CLI |
-| MMD、Toon、MBTS 和 Wiggle 定向操作 | Runtime `ce9ae34` 的原生 Python provider，经 [DCC 入口](../../src/dcc_mcp_blender/_native_runtime_ops.py)直接调用 |
+| 当前 MMD Tools 原生物理 | DCC 现有 live Operator/RNA 调用 `mmd_tools.build_rig`，不新增 provider |
+| 遗留可选 Native 方法 | Runtime `ce9ae34` 经 [DCC 入口](../../src/dcc_mcp_blender/_native_runtime_ops.py)直接调用。Toon、MBTS 和 Wiggle 不作为当前 MMD 路径的前置 |
 | 构建、业务验证、材质配方和资产 | NodeBPY-Bridges 与 Assets。DCC [接入层](../../src/dcc_mcp_blender/_nodebpy_runtime_ops.py)调用项目入口 |
 | 远端烘焙、物理计算、渲染和作业 | 现有 Fleet CLI 与 Worker，保持原接口和配置 |
 
-Runtime 在此只提供原生依赖。DCC 不转调旧 MCP，也不接管 NodeBPY 业务代码或资产。生产配置、现有会话和 Worker 继续使用原入口。
+当前 MMD Tools 路径不依赖旧 Runtime。仅使用遗留 Native 方法时才附加其依赖路径。DCC 不转调旧 MCP，也不接管 NodeBPY 业务代码或资产。生产配置、现有会话和 Worker 继续使用原入口。
+
+`mmd.toon.*` 对应旧 Runtime 的可选 `mmd_toon_lookdev` 接口，和 MMD Tools、MBTS 是不同组件。没有证据表明当前工作路径需要它。此前将其缺包列为迁移阻塞是范围判断错误，现撤销该前置；不要求用户查找或安装。
 
 ## 日常共作
 
@@ -24,6 +29,8 @@ Agent 在选定实例工作，人可以查看、修改或中断。通常依次�
 5. 需要改图时，使用 `blender-node-runtime` 的局部查询、schema 和 revision 修改工具。先读取目标图及 revision，再提交有限修改。具体边界见 [节点契约](../../src/dcc_mcp_blender/skills/blender-node-runtime/tools.yaml)。
 
 普通编辑不要求 task、参与票据、完整检查清单或外观接受。工具保留当前视图，默认不关闭 Blender。项目验证、确认保存和人的外观判断分别报告。
+
+需要构建 MMD 物理时，明确选择模型根，通过 `blender-rna-runtime` 查询并调用 `mmd_tools.build_rig`，再读取 `mmd_root.is_built` 和实际后端结果。世界参数与16项碰撞 mask 可由现有 RNA 工具读写；`collision_exclusions` 的关系维护交给插件，不为 Object 指针新增通用编码。构建可能重建现有 rig，未知结果不得自动重试。
 
 复跑构建时，在已完成 `prepare` 的独立实例中使用新输出路径：
 
@@ -50,7 +57,13 @@ NodeBPY `verify` 的重建验证可能临时切换并恢复材质绑定，因此
 
 ## 本机验收边界
 
-以下是 2026-10-17 私有 run03 与最终冷启动 run05 的实测，使用 NPR 0.4.0-alpha.3、Blender 5.2.0 LTS、build `4b0f35d53dec951c212b2b42f8400679fda1b804`。[run03 回执](/Users/chenrui/.cache/blender-mcp-runtime/dcc-migration-20261017/npr-run-03)与 [run05 回执](/Users/chenrui/.cache/blender-mcp-runtime/dcc-migration-20261017/npr-run-05)保留输入、调用和产物。
+当前目标的[原生回执](/Users/chenrui/.cache/blender-mcp-runtime/dcc-migration-20261017/npr-alpha4-mmd-native-01)使用 NPR alpha.4 精确二进制和 MMD Tools native API1 安装包。二进制 SHA-256 为 `e498d282bb12d00dbec6af4e556309b1c148512ec5fb93f19d15c81a93b3962a`，插件包 SHA-256 为 `63bef7589b90dd38b0b76178593934141d41437ee3be073aaaed85fb4eafe3c7`。安装包位于该 NPR 版本目录的 `addons/mmd_tools-4.5.11-npr-native-api1.zip`。
+
+独立 Profile 通过现有外层 CLI 导入合成 PMX、选择模型和执行 `mmd_tools.build_rig`，实际返回 FINISHED。2 个刚体生成 1 条 `collision_exclusions` 关系、0 个碰撞辅助对象，后端为 `native_pairs_v1`；未注册 MMR。世界参数和16项 mask 通过现有 RNA 函数读写并恢复，保存重开后关系一致。该阶段为10次真实 CLI 调用，settings 的8次函数调用在其中一次诊断 RPC 内执行，不混为 RPC 数量。[最小原生入口](../../tests/native_mmd_tools_runtime.py)要求外层实际执行导入和构建。
+
+同一插件完成复制 Nefer 的 NodeBPY 构建，项目入口12.248秒；人工修改后的原位 verify 为2.111秒。610个对象、人工修改和视图保持，最终保存确认、GUI打开。完整求解性能和Linux部署资格复用插件所属会话的固定包证据，本轮没有重新测量或部署。33项相关回归、Ruff和skill检查通过。没有新增产品接口或改物理实现。
+
+以下为此前 alpha.3 与官方 MMD Tools 4.5.14 的历史基线。2026-10-17 私有 run03 与 run05 使用 Blender 5.2.0 LTS、build `4b0f35d53dec951c212b2b42f8400679fda1b804`。[run03 回执](/Users/chenrui/.cache/blender-mcp-runtime/dcc-migration-20261017/npr-run-03)与 [run05 回执](/Users/chenrui/.cache/blender-mcp-runtime/dcc-migration-20261017/npr-run-05)保留输入、调用和产物。
 
 | 验收 | 结果与限制 |
 | --- | --- |
@@ -58,7 +71,7 @@ NodeBPY `verify` 的重建验证可能临时切换并恢复材质绑定，因此
 | 插件 | 官方 MMD Tools 4.5.14 安装到私有 Extension repo，完整身份、Operator 和 OpenCC wheel 导入通过。Wiggle 2 2.2.4、MBTS 当前进程启停通过 |
 | RNA | 8 次工具函数调用通过，含真实插件参数与合成 PMX 导入；不是 8 次 RPC |
 | 节点 | 两种 NPR 自定义节点及 revision 检查通过。真实 Nefer Face 材质嵌套 495 个节点；对其未绑定副本完成局部查询、候选验证、人工介入后的 stale 拒绝和补丁读回，原材质及共享组保持不变。此角色图没有 ShaderInfo，不将其伪报为已使用该节点 |
-| Toon | 缺少真实插件包，尚未完成原生验收 |
+| 遗留 Toon | 未启用、未验证修改路径。属于可选兼容接口，不是当前 MMD Tools 或迁移的必需项 |
 | NodeBPY 真实业务 | 复制 Nefer 构建通过，项目入口 12.848 秒、CLI 13.251 秒；人工修改后原位 verify 通过，入口 2.354 秒。视图和人工修改保留，最终显式保存确认。受控缺失依赖返回失败，未被外层 success 掩盖 |
 | 最终冷启动 | run05 未使用热重载，14 次 CLI 调用完成插件准备、输入检查、构建、人工介入、验证与保存。ready 2.375 秒，构建入口 12.957 秒、verify 2.485 秒。610 个对象、人工修改和视图保留，GUI 打开 |
 
@@ -70,4 +83,4 @@ NodeBPY `verify` 的重建验证可能临时切换并恢复材质绑定，因此
 
 生产侧 530 个 Profile 文件和 NPR 注册哈希保持不变。本任务未写生产 MCP 配置；早先配置哈希一致，末次冷启动时观察到全局启动程序已指向 alpha.4，未回滚该变化。run05 使用进程内明确的 alpha.3 路径完成隔离验证。
 
-run03、run04 均保存后明确关闭；当前验收实例见 run05 的 `ready.json`。run01 的启动错误窗口保留供诊断，未自动清理。节点提交失败和不完整回退分支由模拟回归验证，不冒称原生回退已验证。
+run03、run04 均保存后明确关闭；run05 保留为历史验收现场，最新 alpha.4 实例见其原生回执目录的 `ready.json`。run01 的启动错误窗口保留供诊断，未自动清理。节点提交失败和不完整回退分支由模拟回归验证，不冒称原生回退已验证。

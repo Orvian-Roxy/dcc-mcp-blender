@@ -17,8 +17,21 @@ metadata:
 
 # Native MMD runtime
 
+For the current MMD Tools native-physics package, use the existing
+`blender-rna-runtime` tools with `mmd_tools.build_rig` after selecting the exact
+model root. The addon owns collision construction. It requires the qualified
+NPR runtime, but does not require MMR or this legacy Runtime provider.
+Read `mmd_root.is_built` and the native backend evidence after construction.
+The build operator may rebuild an existing rig; do not retry an uncertain call.
+
 Call `list_methods` to find the public native methods and their query, plan,
 modify, validate or restore phase. Worker actions are excluded.
+
+The retained `mmd.toon.*` methods target the optional legacy
+`mmd_toon_lookdev` addon. They are separate from MMD Tools and MBTS. The current
+NodeBPY and MMD Tools paths do not depend on that addon. Its absence does not
+block core migration and is not a request to install it. MBTS and Wiggle methods
+also remain optional compatibility paths.
 
 Use `blender-dev.attach_project` to attach the existing `blender-mcp-runtime`
 checkout and any required dependency paths. This skill imports
