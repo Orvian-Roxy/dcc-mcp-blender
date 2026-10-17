@@ -64,11 +64,15 @@ tools:
         - verify
       game:
         type: string
-        enum: [genshin, Genshin]
+        enum: [genshin, Genshin, wuwa, WutheringWaves, zzz, ZenlessZoneZero]
       profile:
         type: string
       output:
         type: string
+      full:
+        type: boolean
+        default: false
+        description: Return full current-call details; successful builds retain report_path for later reading.
   output_schema:
     type: object
     additionalProperties: true
