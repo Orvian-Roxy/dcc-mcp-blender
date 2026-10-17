@@ -74,36 +74,46 @@ def _unrelated(tree, target_name):
     )
 
 
-def run_project_node_check(material_name=None):
-    """Retain a patched copy and return bounded evidence from the actual graph."""
+def run_project_node_check(material_name=None, patch_material_name=None):
+    """Retain a patched copy and return bounded evidence from the actual graph.
+
+    NPR nodes are inspected only when the actual material uses them. To inspect
+    one complex material while patching a different assigned layer, pass both
+    explicit names; the report distinguishes those two sources.
+    """
     import bpy
 
-    material = None
-    npr = None
-    for obj in bpy.context.scene.objects:
-        for slot in obj.material_slots:
-            candidate = slot.material
-            if candidate is None or candidate.node_tree is None:
-                continue
-            if material_name is not None and candidate.name != material_name:
-                continue
-            npr = _find_npr(candidate)
-            if npr is not None:
-                material = candidate
-                break
-        if material is not None:
-            break
-    assert material is not None, "No assigned material with a real NPR ShaderInfo node was found"
+    assigned = {
+        slot.material.name: slot.material
+        for obj in bpy.context.scene.objects
+        for slot in obj.material_slots
+        if slot.material is not None and slot.material.node_tree is not None
+    }
+    material = assigned.get(material_name) if material_name else next(iter(assigned.values()), None)
+    assert material is not None, "Requested assigned node material was not found"
+    patch_source = assigned.get(patch_material_name) if patch_material_name else material
+    assert patch_source is not None, "Requested assigned patch material was not found"
     original_ref = _ref(material)
-    original = runtime.query_nodes(original_ref, limit=5)
-    assert original["success"], original
-    npr_ref, npr_name, npr_type = npr
-    npr_schema = runtime.node_schema(npr_ref, npr_name, limit=20)
-    assert npr_schema["success"], npr_schema
-    copied = material.copy()
+    originals = {}
+    for source in (material, patch_source):
+        observed = runtime.query_nodes(_ref(source), limit=5)
+        assert observed["success"], observed
+        originals[source.name] = observed
+    original = originals[material.name]
+    assert original["context"]["nodes"], "Actual material contains no nodes"
+    project_schema = runtime.node_schema(original_ref, original["context"]["nodes"][0]["name"], limit=20)
+    assert project_schema["success"], project_schema
+    npr = _find_npr(material)
+    npr_ref = npr_type = None
+    npr_schema = None
+    if npr is not None:
+        npr_ref, npr_name, npr_type = npr
+        npr_schema = runtime.node_schema(npr_ref, npr_name, limit=20)
+        assert npr_schema["success"], npr_schema
+    copied = patch_source.copy()
     copied.name = ".DCC NodeBPY Material Check"
     copied.use_fake_user = True
-    assert copied.node_tree != material.node_tree, "Material.copy did not isolate the surface tree"
+    assert copied.node_tree != patch_source.node_tree, "Material.copy did not isolate the surface tree"
     copied_ref = _ref(copied)
     node, socket, previous, proposed = _input_to_edit(copied.node_tree)
     unrelated = _unrelated(copied.node_tree, node.name)
@@ -126,14 +136,20 @@ def run_project_node_check(material_name=None):
     assert math.isclose(socket.default_value, proposed, rel_tol=1e-6, abs_tol=1e-8)
     assert node.label == human_label, "Commit overwrote the intervening human label"
     assert _unrelated(copied.node_tree, node.name) == unrelated, "Unrelated copied nodes changed"
-    original_after = runtime.query_nodes(original_ref, limit=1)
-    assert original_after["success"], original_after
-    assert original_after["context"]["revision"] == original["context"]["revision"], (
-        "Original material/shared groups changed"
-    )
+    for source in (material, patch_source):
+        original_after = runtime.query_nodes(_ref(source), limit=1)
+        assert original_after["success"], original_after
+        assert original_after["context"]["revision"] == originals[source.name]["context"]["revision"], (
+            "Original material/shared groups changed"
+        )
     return {
         "passed": True,
         "source_material": material.name,
+        "patched_source_material": patch_source.name,
+        "same_material_query_and_patch": material == patch_source,
+        "project_graph_query": original,
+        "project_graph_schema_page": project_schema,
+        "npr_status": "present" if npr is not None else "absent",
         "retained_material_copy": copied.name,
         "npr_type": npr_type,
         "npr_tree_ref": npr_ref,
