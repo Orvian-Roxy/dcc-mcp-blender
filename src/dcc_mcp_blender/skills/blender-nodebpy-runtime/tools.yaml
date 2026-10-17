@@ -64,7 +64,7 @@ tools:
         - verify
       game:
         type: string
-        enum: [genshin, Genshin, wuwa, WutheringWaves, zzz, ZenlessZoneZero]
+        enum: [genshin, Genshin, wuwa, WutheringWaves, zzz, ZenlessZoneZero, hsr, HonkaiStarRail]
       profile:
         type: string
       output:

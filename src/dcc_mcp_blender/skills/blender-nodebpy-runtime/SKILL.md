@@ -1,6 +1,6 @@
 ---
 name: blender-nodebpy-runtime
-description: "Prepare NodeBPY dependencies, build a Genshin, WuWa or ZZZ candidate and verify current Blender edits."
+description: "Prepare NodeBPY dependencies, build supported game candidates and verify current Blender edits."
 license: "MIT"
 metadata:
   dcc-mcp:
@@ -42,7 +42,7 @@ a saved scene afterward, use the typed save tool and read-only session state.
 import, validation, computation and file operations. CLI wall time minus this value
 is approximate surrounding overhead, not a separate measurement of GPU or CPU time.
 
-Supported games are `genshin`, `wuwa` and `zzz` (or their project directory names).
+Supported games are `genshin`, `wuwa`, `zzz` and `hsr` (or their project directory names). HSR opens its Profile's character-free template only for a fresh co-work build. Its host input check reports the PMX inventory checks deferred to the registered importer during `run`; keep those limits visible when reporting readiness.
 Successful calls return a bounded summary with status, output, save state, elapsed
 time, available scale counts and qualification limits. `full=true` returns the
 current call's complete details. Errors always retain full evidence.

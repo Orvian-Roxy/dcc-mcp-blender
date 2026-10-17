@@ -57,7 +57,9 @@ dcc-mcp-cli --base-url <gateway> --no-auto-gateway --non-interactive \
 
 候选已打开时，将 `action` 改为 `verify`，使用同一输出。共作入口跳过纯视口交付要求，保留材质、灯光、色彩管理和结构检查。旧项目入口继续使用原视图约定。
 
-当前明确支持 Genshin、WutheringWaves 和 ZenlessZoneZero（CLI 简写为 `genshin`、`wuwa`、`zzz`），其他游戏仍明确拒绝。业务代码、Profile 和资源继续留在 NodeBPY 项目。默认成功结果包含状态、规模和必要资格限制；`diagnostic_only` 不表示可交付候选。
+当前明确支持 Genshin、WutheringWaves、ZenlessZoneZero 和 HonkaiStarRail（CLI 简写为 `genshin`、`wuwa`、`zzz`、`hsr`），其他游戏仍明确拒绝。业务代码、Profile 和资源继续留在 NodeBPY 项目。默认成功结果包含状态、规模和必要资格限制；`diagnostic_only` 不表示可交付候选。
+
+HSR 新共作从 Profile 明确的无角色模板开始，保护当前修改并保留视图；构建确认保存后保留现场，不自动重开。host `check` 明示 PMX 槽位／头骨／基础纹理及运行态仍需 `run` preflight 验证。Dahlia 的实际构建、原位 verify、模拟编辑／视图保持及显式保存已通过，范围见 [HSR 接入凭据](hsr-co-work-20261017.json)；不代表所有 HSR 角色、视觉或物理质量接受。
 
 成功构建的完整结果独占保存为候选旁的 `<stem>.dcc-build-report.json`，返回 `report_path`，之后可直接只读查看。`full=true` 返回完整当次结果，verify 不覆盖原构建报告。报告写入失败时返回原完整成功结果及 `report_error`，避免将已完成构建误报失败而重跑；错误与重要业务限制始终保留。
 
