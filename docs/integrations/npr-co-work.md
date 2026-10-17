@@ -24,6 +24,18 @@ MMD Tools 的源码、打包、版本和安装更新统一由[插件维护会话
 
 Agent 在选定实例工作，人可以查看、修改或中断。通常依次完成这些动作。
 
+需要新实例时，使用 [NPR 启动入口](../../tools/npr_runtime.py)，复用官方 CLI 的 gateway 与 `start-instance`：
+
+```bash
+python tools/npr_runtime.py start --config /absolute/npr.json --dry-run
+python tools/npr_runtime.py start --config /absolute/npr.json
+python tools/npr_runtime.py status --work-dir /absolute/private-run
+```
+
+配置明确指定 NPR 可执行文件及 SHA/build、现有 DCC CLI/server、adapter 源码及依赖目录、项目、私有端口和新的 `work_dir`。`python_paths` 只引用已安装目录或 wheel，入口不安装或更新插件。具体字段和示例见脚本帮助。已有或状态未知的目录用 `status` 观察，保留原操作身份；`start` 不覆盖目录。成功结果包含实际 binary/build、组件版本、PID、`instance_id` 和连接地址，内部 `host.json` 单独不代表 CLI 就绪。Agent 的长期 GUI 任务应由持续运行的终端或既有执行宿主承载；宿主结束后的进程状态须用 `status` 观察，不能只读旧 ready 回执。
+
+GUI 空闲调度间隔默认 0.5 秒，可在本次绑定配置中显式设 `idle_interval_secs=0.05`。这不修改 Core 或其他实例；本机小查询及空闲成本对照见[第二阶段验收记录](/Users/chenrui/.codex/worktrees/addon-capabilities-research/blender-mcp-runtime/outputs/research/plugin-management-2026-10-17/核心接入第二阶段.md)。
+
 1. 选择明确的 `instance_id`。后续 CLI 调用持续带上 `--dcc-type blender --instance-id <id>`，避免连接到其他 Blender。
 2. 按需 `load-skill`，再调用该 skill 的工具。NodeBPY 使用 `blender-nodebpy-runtime`，插件使用 `blender-dev` 和 `blender-extensions`。
 3. 启动独立 NPR 时，用进程环境变量 `NODEBPY_BLENDER_BINARY` 明确指定已选 NPR 的实际可执行文件；否则 NodeBPY 会读取全局 MCP 启动设置。调用 `blender_nodebpy_runtime__prepare`，指定项目 checkout、已有依赖路径和 MMD 插件模块名。Extension 使用完整 `bl_ext.<repo>.<package>` 身份。成功须包含当前进程的插件注册和项目 doctor 结果。
@@ -45,6 +57,12 @@ dcc-mcp-cli --base-url <gateway> --no-auto-gateway --non-interactive \
 
 候选已打开时，将 `action` 改为 `verify`，使用同一输出。共作入口跳过纯视口交付要求，保留材质、灯光、色彩管理和结构检查。旧项目入口继续使用原视图约定。
 
+当前明确支持 Genshin、WutheringWaves 和 ZenlessZoneZero（CLI 简写为 `genshin`、`wuwa`、`zzz`），其他游戏仍明确拒绝。业务代码、Profile 和资源继续留在 NodeBPY 项目。默认成功结果包含状态、规模和必要资格限制；`diagnostic_only` 不表示可交付候选。
+
+成功构建的完整结果独占保存为候选旁的 `<stem>.dcc-build-report.json`，返回 `report_path`，之后可直接只读查看。`full=true` 返回完整当次结果，verify 不覆盖原构建报告。报告写入失败时返回原完整成功结果及 `report_error`，避免将已完成构建误报失败而重跑；错误与重要业务限制始终保留。
+
+远端计算由 Agent 直接使用既有 Fleet CLI 的 `submit/status/result/download`，配置、Job/Attempt 和产物校验仍由 Fleet 维护。Blender 主线程无需再转调旧 MCP 或执行 SSH。具体接口见已部署 Runtime 的 [Fleet 说明](/Users/chenrui/.local/share/blender-mcp-runtime/releases/20261017-082a179-mmd-native/docs/fleet.md)。
+
 ## 保存状态为什么仍然保守
 
 [共享文件入口](../../src/dcc_mcp_blender/_scene_files.py)在明确打开、替换或关闭前保护场景、图像像素和 managed pending 修改。保存须同时读回 Operator 结果、实际文件目标、场景状态和文件大小及修改时间。已有文件或外层 `success` 不能证明本次保存完成。
@@ -58,6 +76,8 @@ NodeBPY `verify` 的重建验证可能临时切换并恢复材质绑定，因此
 保存返回 `pending` 或 `unknown`、调用超时或连接中断后，先观察现场。未知写入不自动重试。通用 Python 里的保存仍可能返回保守状态，应由明确文件入口确认。
 
 ## 本机验收边界
+
+最新[第二阶段验收](/Users/chenrui/.codex/worktrees/addon-capabilities-research/blender-mcp-runtime/outputs/research/plugin-management-2026-10-17/核心接入第二阶段.md)已完成三游戏真实共作、Hiyuki 历史 BVH/clip 和 Fleet 0–2030 计算回收及本地缓存检查。DCC 1,936 项、NodeBPY 730 项测试通过（另有 43 项跳过）；Vivian 仍是 diagnostic_only，物理表面质量未重验。三个完成负载的本轮私有实例已保存后正常关闭，另一次未写入场景的进程退出记录保留，历史窗口未动；未切换生产。下列为第一阶段的固定目标与历史回执。
 
 当前目标的[原生回执](/Users/chenrui/.cache/blender-mcp-runtime/dcc-migration-20261017/npr-alpha4-mmd-native-01)使用 NPR alpha.4 精确二进制和 MMD Tools native API1 安装包。二进制 SHA-256 为 `e498d282bb12d00dbec6af4e556309b1c148512ec5fb93f19d15c81a93b3962a`，插件包 SHA-256 为 `63bef7589b90dd38b0b76178593934141d41437ee3be073aaaed85fb4eafe3c7`。安装包位于该 NPR 版本目录的 `addons/mmd_tools-4.5.11-npr-native-api1.zip`。
 
