@@ -145,3 +145,6 @@ dist_*
 /.serena/
 /.trae/
 /.windsurf/
+
+# Task-owned acceptance state and job receipts.
+/.codex-runtime/

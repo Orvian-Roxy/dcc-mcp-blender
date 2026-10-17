@@ -115,6 +115,7 @@ execute_python only when no typed skill fits
 
 ## Vendor integration notes
 
+- **NPR:** Before changing NPR co-work, NodeBPY integration or migration acceptance, read [NPR ownership and acceptance status](docs/integrations/npr-co-work.md).
 - [docs/integrations/claude.md](docs/integrations/claude.md) — Claude Desktop
   config, progressive loading, viewport + cancellation tips.
 - [docs/integrations/gemini.md](docs/integrations/gemini.md) — Gemini / Vertex
