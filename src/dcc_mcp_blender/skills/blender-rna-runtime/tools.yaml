@@ -1,0 +1,243 @@
+tools:
+- name: search_operators
+  description: Search live Operator identifiers and labels without precomputed plugin catalogs.
+  source_file: scripts/search_operators.py
+  execution: sync
+  affinity: main
+  timeout_hint_secs: 0
+  input_schema:
+    type: object
+    additionalProperties: false
+    required: []
+    properties:
+      query: &id001
+        type: string
+        maxLength: 128
+        default: ''
+      offset: &id002
+        type: integer
+        minimum: 0
+        maximum: 100000
+        default: 0
+      limit: &id003
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  output_schema:
+    type: object
+    additionalProperties: true
+    required:
+    - success
+    properties:
+      success:
+        type: boolean
+      message:
+        type: string
+      context:
+        type: object
+  read_only: true
+  destructive: false
+  idempotent: true
+  annotations:
+    read_only_hint: true
+    destructive_hint: false
+    idempotent_hint: true
+    open_world_hint: true
+- name: describe_operator
+  description: Describe actual live Operator parameter types, enums and ranges.
+  source_file: scripts/describe_operator.py
+  execution: sync
+  affinity: main
+  timeout_hint_secs: 0
+  input_schema:
+    type: object
+    additionalProperties: false
+    required:
+    - operator_id
+    properties:
+      operator_id: &id005
+        type: string
+        pattern: ^[A-Za-z][A-Za-z0-9_]*\.[A-Za-z][A-Za-z0-9_]*$
+        maxLength: 257
+      query: *id001
+      offset: *id002
+      limit: *id003
+  output_schema:
+    type: object
+    additionalProperties: true
+    required:
+    - success
+    properties:
+      success:
+        type: boolean
+      message:
+        type: string
+      context:
+        type: object
+  read_only: true
+  destructive: false
+  idempotent: true
+  annotations:
+    read_only_hint: true
+    destructive_hint: false
+    idempotent_hint: true
+    open_world_hint: true
+- name: get_properties
+  description: Inspect bounded RNA owner/PropertyGroup properties or read one scalar path, including plugin settings.
+  source_file: scripts/get_properties.py
+  execution: sync
+  affinity: main
+  timeout_hint_secs: 0
+  input_schema:
+    type: object
+    additionalProperties: false
+    required:
+    - owner
+    properties:
+      owner: &id004
+        type: object
+        additionalProperties: false
+        required:
+        - type
+        properties:
+          type:
+            type: string
+            enum:
+            - scene
+            - object
+            - pose_bone
+            - material
+            - addon_preferences
+          name:
+            type: string
+            minLength: 1
+            maxLength: 256
+          object_name:
+            type: string
+            minLength: 1
+            maxLength: 256
+      path:
+        type: string
+        maxLength: 1024
+        default: ''
+      query: *id001
+      offset: *id002
+      limit: *id003
+  output_schema:
+    type: object
+    additionalProperties: true
+    required:
+    - success
+    properties:
+      success:
+        type: boolean
+      message:
+        type: string
+      context:
+        type: object
+  read_only: true
+  destructive: false
+  idempotent: true
+  annotations:
+    read_only_hint: true
+    destructive_hint: false
+    idempotent_hint: true
+    open_world_hint: true
+- name: set_property
+  description: Write one RNA scalar or fixed array and return actual readback. Use Native providers for coupled
+    selection changes.
+  source_file: scripts/set_property.py
+  execution: sync
+  affinity: main
+  timeout_hint_secs: 0
+  input_schema:
+    type: object
+    additionalProperties: false
+    required:
+    - owner
+    - path
+    - value
+    properties:
+      owner: *id004
+      path:
+        type: string
+        maxLength: 1024
+        default: ''
+        minLength: 1
+      value: {}
+  output_schema:
+    type: object
+    additionalProperties: true
+    required:
+    - success
+    properties:
+      success:
+        type: boolean
+      message:
+        type: string
+      context:
+        type: object
+  read_only: false
+  destructive: false
+  idempotent: false
+  annotations:
+    read_only_hint: false
+    destructive_hint: false
+    idempotent_hint: false
+    open_world_hint: true
+- name: call_operator
+  description: Validate all live RNA arguments, poll existing context and EXEC_DEFAULT once; return actual status.
+    File/plugin lifecycle uses typed tools.
+  source_file: scripts/call_operator.py
+  execution: sync
+  affinity: main
+  timeout_hint_secs: 30
+  input_schema:
+    type: object
+    additionalProperties: false
+    required:
+    - operator_id
+    properties:
+      operator_id: *id005
+      parameters:
+        type: object
+        maxProperties: 64
+        additionalProperties: true
+      context:
+        type: object
+        additionalProperties: false
+        properties:
+          active_object:
+            type:
+            - string
+            - 'null'
+          selected_objects:
+            type: array
+            maxItems: 100
+            items:
+              type: string
+          mode:
+            type: string
+          area_type:
+            type: string
+  output_schema:
+    type: object
+    additionalProperties: true
+    required:
+    - success
+    properties:
+      success:
+        type: boolean
+      message:
+        type: string
+      context:
+        type: object
+  read_only: false
+  destructive: true
+  idempotent: false
+  annotations:
+    read_only_hint: false
+    destructive_hint: true
+    idempotent_hint: false
+    open_world_hint: true
