@@ -1,6 +1,6 @@
 ---
 name: blender-nodebpy-runtime
-description: "Prepare NodeBPY dependencies, build a Genshin candidate and verify current Blender edits."
+description: "Prepare NodeBPY dependencies, build a Genshin, WuWa or ZZZ candidate and verify current Blender edits."
 license: "MIT"
 metadata:
   dcc-mcp:
@@ -41,3 +41,16 @@ a saved scene afterward, use the typed save tool and read-only session state.
 `context.project_elapsed_seconds` measures the project entry call, including its
 import, validation, computation and file operations. CLI wall time minus this value
 is approximate surrounding overhead, not a separate measurement of GPU or CPU time.
+
+Supported games are `genshin`, `wuwa` and `zzz` (or their project directory names).
+Successful calls return a bounded summary with status, output, save state, elapsed
+time, available scale counts and qualification limits. `full=true` returns the
+current call's complete details. Errors always retain full evidence.
+
+A successful `run` writes its full receipt beside the candidate as
+`<stem>.dcc-build-report.json` and returns `report_path` in either mode. Read this
+file for the original import and timing details without repeating the build.
+`verify` returns current validation and any existing `build_report_path`; it never
+replaces the original receipt. Report creation uses exclusive mode. If it fails,
+`report_error` explains the auxiliary failure and the successful build's complete
+result is returned, so it must not be retried just to obtain the report.

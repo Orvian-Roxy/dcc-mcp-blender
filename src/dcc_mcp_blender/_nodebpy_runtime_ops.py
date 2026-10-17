@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from pathlib import Path
 from time import perf_counter
 
@@ -56,6 +57,88 @@ def _report_save_observation(result: dict, action: str, output: str) -> None:
     result["context"]["file_state"] = state
 
 
+def _summarize_success(result: dict) -> dict:
+    """Bound successful project output; failures retain the complete project result."""
+    payload = result["context"]["result"]
+    details = payload.get("details", {})
+    scene = details.get("scene", details)
+    scale = scene.get("first", scene)
+    metrics = {
+        key: scale[key]
+        for key in (
+            "slots",
+            "faces",
+            "vertices",
+            "surface_slots",
+            "outline_slots",
+            "materials",
+            "rigid_bodies",
+            "joints",
+            "parameters_checked",
+            "resource_bindings_checked",
+        )
+        if isinstance(scale.get(key), (int, float))
+    }
+    if isinstance(scale.get("components"), dict):
+        metrics["components"] = {
+            key: value for key, value in list(scale["components"].items())[:3] if isinstance(value, int)
+        }
+    if isinstance(scale.get("checked_sources"), list):
+        metrics["checked_sources"] = len(scale["checked_sources"])
+    summary = {
+        key: payload[key]
+        for key in ("ok", "status", "game", "output", "human_approved", "output_kind")
+        if key in payload
+    }
+    summary.update(
+        current_scene_saved=details.get("current_scene_saved"),
+        save_status=details.get("save_status", "not_checked"),
+        metrics=metrics,
+    )
+    preflight = scene.get("preflight", {})
+    output_kind = payload.get("output_kind", scale.get("output_kind", preflight.get("output_kind")))
+    if output_kind is not None:
+        summary["output_kind"] = output_kind
+    for key in ("contract_limits", "pending_visual_gates", "manual_visual_review"):
+        values = scale.get(key, preflight.get(key, []))
+        if values:
+            summary[key + "_count"] = len(values)
+            summary[key] = [str(item)[:512] for item in values[:5]]
+    acceptance = scene.get("acceptance", {})
+    if acceptance:
+        summary["acceptance"] = {
+            key: acceptance[key] for key in ("status", "candidate", "checkpoint") if key in acceptance
+        }
+        pending = acceptance.get("pending", [])
+        summary["acceptance"]["pending_count"] = len(pending)
+        summary["acceptance"]["pending"] = [str(item)[:512] for item in pending[:5]]
+    warnings = scale.get("warnings", [])
+    if warnings:
+        summary["warning_count"] = len(warnings)
+        summary["warnings"] = [str(item)[:512] for item in warnings[:3]]
+    context = {"result": summary, "project_elapsed_seconds": result["context"]["project_elapsed_seconds"]}
+    for key in ("report_path", "build_report_path"):
+        if key in result["context"]:
+            context[key] = result["context"][key]
+    return skill_success("NodeBPY project result", **context)
+
+
+def _retain_build_report(result: dict, output: str) -> bool:
+    """Keep this build's full receipt without replacing an older report."""
+    try:
+        path = Path(output).expanduser().resolve().with_suffix(".dcc-build-report.json")
+        with path.open("x", encoding="utf-8") as stream:
+            json.dump(result, stream, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        result["context"]["report_error"] = f"{type(exc).__name__}: {exc}"
+        result["context"]["warning"] = (
+            "Build succeeded; full evidence is returned because its report could not be written."
+        )
+        return False
+    result["context"]["report_path"] = str(path)
+    return True
+
+
 def _check_checkout(project_root: str) -> None:
     root = Path(project_root).expanduser().resolve(strict=True)
     for name in ("nodebpy_cli", "nodebpy_build"):
@@ -95,7 +178,7 @@ def prepare(project_root: str, extra_paths: list[str] | None = None, addon_modul
         return skill_exception(exc, message="Failed to prepare NodeBPY")
 
 
-def project(project_root: str, action: str, game: str, profile: str, output: str) -> dict:
+def project(project_root: str, action: str, game: str, profile: str, output: str, full: bool = False) -> dict:
     """Check inputs, build a new candidate or inspect the live candidate without closing it."""
     try:
         _check_checkout(project_root)
@@ -134,6 +217,16 @@ def project(project_root: str, action: str, game: str, profile: str, output: str
             result["context"]["save_observation"] = observed
         if action in {"run", "verify"} and result.get("success"):
             _report_save_observation(result, action, output)
-        return result
+            if action == "run" and not _retain_build_report(result, output):
+                return result
+            if action == "verify":
+                try:
+                    report = Path(output).expanduser().resolve().with_suffix(".dcc-build-report.json")
+                    if report.is_file():
+                        result["context"]["build_report_path"] = str(report)
+                except Exception as exc:
+                    result["context"]["report_error"] = f"{type(exc).__name__}: {exc}"
+                    return result
+        return _summarize_success(result) if result.get("success") and not full else result
     except Exception as exc:
         return skill_exception(exc, message="NodeBPY project operation failed")
