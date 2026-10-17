@@ -47,7 +47,7 @@ tools:
         package:
           type: object
           additionalProperties: true
-          required: [archive_path]
+          required: [archive_path, package_id, sha256]
           properties:
             package_id: {type: string}
             archive_path: {type: string, minLength: 1}
@@ -55,9 +55,13 @@ tools:
             package_kind: {type: string, enum: [auto, extension, legacy_addon], default: auto}
         repository:
           type: string
-          description: "Optional Blender user repository module; defaults to user_default or the first writable repository."
+          description: "Explicit enabled writable repository module, required for Extension packages."
         enable: {type: boolean, default: false}
         overwrite: {type: boolean, default: false}
+        persist: {type: boolean, default: false}
+        target_directory:
+          type: string
+          description: "Explicit current profile user SCRIPTS/addons directory, required for legacy packages."
     output_schema:
       type: object
       additionalProperties: true

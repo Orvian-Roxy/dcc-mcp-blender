@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import os
 import re
@@ -81,6 +82,30 @@ def _parse_manifest(content: str) -> Dict[str, str]:
     return manifest
 
 
+def _legacy_metadata(source: bytes) -> Dict[str, Any]:
+    if len(source) > 2 * 1024**2:
+        raise ExtensionPackageError("Legacy metadata entrypoint exceeds 2 MiB")
+    for node in ast.parse(source.decode("utf-8-sig")).body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "bl_info" for t in node.targets):
+            try:
+                info = ast.literal_eval(node.value)
+            except (ValueError, TypeError) as exc:
+                raise ExtensionPackageError("Legacy bl_info must be a literal dictionary") from exc
+            if not isinstance(info, dict):
+                raise ExtensionPackageError("Legacy bl_info must be a literal dictionary")
+
+            def version(value):
+                return ".".join(str(part) for part in value) if isinstance(value, (tuple, list)) else value
+
+            return {
+                "name": info.get("name"),
+                "author": info.get("author"),
+                "version": version(info.get("version")),
+                "blender_version_min": version(info.get("blender")),
+            }
+    raise ExtensionPackageError("Legacy add-on requires a literal bl_info dictionary")
+
+
 def _inspect_zip(path: Path) -> Dict[str, Any]:
     with zipfile.ZipFile(path) as archive:
         members = _archive_members(archive)
@@ -106,11 +131,15 @@ def _inspect_zip(path: Path) -> Dict[str, Any]:
         )
         if len(addon_roots) != 1:
             raise ExtensionPackageError("Legacy add-on ZIP must contain exactly one top-level package with __init__.py")
+        if any(name.parts[0] != addon_roots[0] for _, name in members):
+            raise ExtensionPackageError("Legacy ZIP must contain only its declared top-level package")
+        entrypoint = next(info for info, name in members if name.as_posix() == addon_roots[0] + "/__init__.py")
+        if entrypoint.file_size > 2 * 1024**2:
+            raise ExtensionPackageError("Legacy metadata entrypoint exceeds 2 MiB")
         return {
             "package_kind": "legacy_addon",
             "package_id": addon_roots[0],
-            "version": None,
-            "blender_version_min": None,
+            **_legacy_metadata(archive.read(entrypoint)),
             "blender_version_max": None,
             "manifest_path": None,
             "file_count": len(members),
@@ -147,8 +176,7 @@ def plan_extension_install(package: Mapping[str, Any]) -> Dict[str, Any]:
         inspected = {
             "package_kind": "legacy_addon",
             "package_id": path.stem,
-            "version": None,
-            "blender_version_min": None,
+            **_legacy_metadata(path.read_bytes()),
             "blender_version_max": None,
             "manifest_path": None,
             "file_count": 1,
@@ -200,17 +228,11 @@ def _user_repositories(bpy: Any) -> List[Dict[str, str]]:
 
 
 def _select_repository(bpy: Any, requested: Optional[str]) -> Dict[str, str]:
-    repositories = _user_repositories(bpy)
-    if requested:
-        selected = next((repo for repo in repositories if repo["module"] == requested), None)
-        if selected is None:
-            raise ExtensionPackageError(f"Enabled Blender user repository not found: {requested}")
-        return selected
-    selected = next((repo for repo in repositories if repo["module"] == "user_default"), None)
-    if selected is None and repositories:
-        selected = repositories[0]
+    if not requested:
+        raise ExtensionPackageError("Installation requires an explicit repository module")
+    selected = next((repo for repo in _user_repositories(bpy) if repo["module"] == requested), None)
     if selected is None:
-        raise ExtensionPackageError("Blender has no enabled writable extension repository")
+        raise ExtensionPackageError(f"Enabled Blender user repository not found: {requested}")
     return selected
 
 
@@ -223,19 +245,9 @@ def _addon_module_names(refresh: bool) -> List[str]:
 
 
 def _addon_states(module_names: List[str]) -> List[Dict[str, Any]]:
-    import addon_utils
+    from dcc_mcp_blender._dev_ops import _addon_status_data
 
-    states = []
-    for module_name in module_names:
-        loaded, enabled = addon_utils.check(module_name)
-        states.append(
-            {
-                "addon_module": module_name,
-                "loaded": bool(loaded),
-                "enabled": bool(enabled),
-            }
-        )
-    return states
+    return [_addon_status_data(name) for name in module_names]
 
 
 def _check_blender_compatibility(plan: Mapping[str, Any], version: Tuple[int, ...]) -> None:
@@ -252,11 +264,20 @@ def install_extension_package(
     repository: Optional[str] = None,
     enable: bool = False,
     overwrite: bool = False,
+    persist: bool = False,
+    target_directory: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Install a planned package with Blender's supported preference operators."""
     import bpy
 
+    if not re.fullmatch(r"(?:sha256:)?[A-Fa-f0-9]{64}", str(package.get("sha256", ""))):
+        raise ExtensionPackageError("Installation requires an explicit sha256 digest")
+    if not package.get("package_id"):
+        raise ExtensionPackageError("Installation requires an explicit package_id")
+    from dcc_mcp_blender._dev_ops import _validate_addon_module, enable_addon
+
     plan = plan_extension_install(package)
+    _validate_addon_module(str(plan["package_id"]), mutate=True)
     blender_version = tuple(bpy.app.version[:3])
     _check_blender_compatibility(plan, blender_version)
     before = set(_addon_module_names(refresh=True))
@@ -264,35 +285,59 @@ def install_extension_package(
     selected_repo = None
     if plan["package_kind"] == "extension":
         selected_repo = _select_repository(bpy, repository)
+        module_name = f"bl_ext.{selected_repo['module']}.{plan['package_id']}"
+        installed_path = Path(selected_repo["directory"]) / str(plan["package_id"])
+    else:
+        actual_directory = Path(bpy.utils.user_resource("SCRIPTS", path="addons")).resolve()
+        if not target_directory or Path(target_directory).expanduser().resolve() != actual_directory:
+            raise ExtensionPackageError(f"Explicit target_directory must match the current profile: {actual_directory}")
+        target_directory = str(actual_directory)
+        module_name = str(plan["package_id"])
+        installed_path = actual_directory / module_name
+    _validate_addon_module(module_name, mutate=True)
+    from dcc_mcp_blender._dev_ops import _addon_status_data
+
+    if not overwrite and (
+        module_name in before
+        or installed_path.exists()
+        or installed_path.with_suffix(".py").exists()
+        or _addon_status_data(module_name)["discoverable"]
+    ):
+        raise ExtensionPackageError(f"Add-on already exists; use enable_addon for an installed package: {module_name}")
+    if plan["package_kind"] == "extension":
         result = bpy.ops.extensions.package_install_files(
             "EXEC_DEFAULT",
             filepath=plan["archive_path"],
             repo=selected_repo["module"],
-            enable_on_install=enable,
+            enable_on_install=False,
             overwrite=overwrite,
         )
     else:
         result = bpy.ops.preferences.addon_install("EXEC_DEFAULT", filepath=plan["archive_path"], overwrite=overwrite)
-        if enable:
-            bpy.ops.preferences.addon_enable(module=plan["package_id"])
 
     if "FINISHED" not in set(result):
         raise ExtensionPackageError(f"Blender package install did not finish: {sorted(result)}")
 
     after = set(_addon_module_names(refresh=True))
-    suffix = "." + str(plan["package_id"])
-    modules = sorted(name for name in after if name == plan["package_id"] or name.endswith(suffix))
-    if not modules:
-        raise ExtensionPackageError(f"Blender reported success but add-on module was not found: {plan['package_id']}")
+    if module_name not in after and not _addon_status_data(module_name)["discoverable"]:
+        raise ExtensionPackageError(f"Blender reported success but add-on module was not found: {module_name}")
+    modules = [module_name]
+    enabled_result = enable_addon(module_name, persist=persist) if enable else None
     states = _addon_states(modules)
-    if enable and not all(state["enabled"] for state in states):
-        raise ExtensionPackageError(f"Blender installed but did not enable every add-on module: {modules}")
+    if enabled_result and not enabled_result["success"]:
+        # Carry host readback through the skill wrapper, including persistence failures.
+        error = ExtensionPackageError(f"Installed, but add-on activation failed: {enabled_result['message']}")
+        error.context = dict(installed=True, addon_modules=modules, addon_states=states, activation=enabled_result)
+        raise error
     return {
         **plan,
         "installed": True,
         "enabled_requested": enable,
         "overwrite": overwrite,
         "repository": selected_repo,
+        "target_directory": target_directory or (selected_repo["directory"] if selected_repo else None),
+        "persistence_requested": persist,
+        "preferences_saved": bool(enabled_result and enabled_result["context"]["preferences_saved"]),
         "addon_modules": modules,
         "addon_states": states,
         "new_addon_modules": sorted(after - before),

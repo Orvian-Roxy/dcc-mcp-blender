@@ -198,6 +198,8 @@ tools:
       type: object
       additionalProperties: false
       properties:
+        limit: {type: integer, minimum: 1, maximum: 500, default: 100}
+        offset: {type: integer, minimum: 0, default: 0}
         filter:
           type: string
     output_schema:
@@ -231,6 +233,11 @@ tools:
       additionalProperties: false
       required: [addon_module]
       properties:
+        operators:
+          type: array
+          maxItems: 32
+          items: {type: string}
+          description: "Optional exact category.name Operators to inspect for registration."
         addon_module:
           type: string
           minLength: 1
@@ -265,6 +272,15 @@ tools:
       additionalProperties: false
       required: [addon_module]
       properties:
+        persist:
+          type: boolean
+          default: false
+          description: "Explicitly update default enable preference and save user preferences; false changes only this process."
+        operators:
+          type: array
+          maxItems: 32
+          items: {type: string}
+          description: "Optional exact category.name Operators to inspect for registration."
         addon_module:
           type: string
           minLength: 1
@@ -299,6 +315,10 @@ tools:
       additionalProperties: false
       required: [addon_module]
       properties:
+        persist:
+          type: boolean
+          default: false
+          description: "Explicitly update default enable preference and save user preferences; false changes only this process."
         addon_module:
           type: string
           minLength: 1
@@ -467,7 +487,13 @@ tools:
     input_schema:
       type: object
       additionalProperties: false
+      required: [file_path, addon_module, sha256, target_directory]
       properties:
+        sha256: {type: string, pattern: "^[A-Fa-f0-9]{64}$"}
+        target_directory:
+          type: string
+          description: "Explicit current profile user SCRIPTS/addons directory, returned by bpy.utils.user_resource."
+        persist: {type: boolean, default: false}
         file_path:
           type: string
           minLength: 1
@@ -475,7 +501,7 @@ tools:
         addon_module:
           type: string
           minLength: 1
-          description: Expected module name after install. Blender derives one from the file name, but an explicit name is safer for archives.
+          description: Exact legacy package module identity to verify before installation.
         overwrite:
           type: boolean
           default: false
@@ -484,11 +510,11 @@ tools:
           type: boolean
           default: true
     read_only: false
-    destructive: false
+    destructive: true
     idempotent: false
     annotations:
       read_only_hint: false
-      destructive_hint: false
+      destructive_hint: true
       idempotent_hint: false
       open_world_hint: true
 
