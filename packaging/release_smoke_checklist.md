@@ -13,7 +13,7 @@ This checklist validates the GUI Extension install path for Blender 4.5+.
   Or delete/rename `%APPDATA%\Blender Foundation\Blender\<version>\extensions\`
 - The release ZIP built by:
   ```bash
-  python packaging/assemble_zip.py --platform win64 --output-dir dist_addon/
+  python ../blender-plugins/addons/DCC-MCP-Blender/packaging/assemble_zip.py --platform win64 --output-dir dist_addon/
   ```
 
 ## 0. Windows Security Gate

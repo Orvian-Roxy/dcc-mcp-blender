@@ -1,9 +1,9 @@
 """E2E test: Blender can actually enable the packaged add-on.
 
-Unlike ``tests/test_addon_packaging.py`` (which calls ``register()`` against a
+Unlike ``../blender-plugins/addons/DCC-MCP-Blender/tests/test_addon_packaging.py`` (which calls ``register()`` against a
 fake ``bpy``), this test drives Blender's real add-on manager end to end:
 
-    stage ``packaging/addon_entry`` as a legacy ``scripts/addons`` add-on
+    stage ``../blender-plugins/addons/DCC-MCP-Blender/packaging/addon_entry`` as a legacy ``scripts/addons`` add-on
     -> ``bpy.ops.preferences.addon_enable``  (imports it + calls ``register()``)
     -> assert the operator/menu classes are registered
     -> ``bpy.ops.preferences.addon_disable`` (calls ``unregister()``)
@@ -20,6 +20,7 @@ Run::
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -38,7 +39,18 @@ if sys.platform == "win32":
 
 pytestmark = pytest.mark.e2e
 
-ADDON_ENTRY = Path(__file__).parents[2] / "packaging" / "addon_entry" / "__init__.py"
+ADDON_ENTRY = (
+    (
+        Path(
+            os.environ.get("BLENDER_PLUGINS_ROOT", str(Path(__file__).resolve().parents[2].parent / "blender-plugins"))
+        )
+        / "addons"
+        / "DCC-MCP-Blender"
+    )
+    / "packaging"
+    / "addon_entry"
+    / "__init__.py"
+)
 ADDON_MODULE = "dcc_mcp_blender_enable_e2e"
 
 

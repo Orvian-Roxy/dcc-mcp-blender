@@ -1,3 +1,5 @@
+blender_plugins_root := env_var_or_default("BLENDER_PLUGINS_ROOT", "../blender-plugins")
+
 # dcc-mcp-blender development justfile
 # Unified dependency and task management
 
@@ -47,13 +49,13 @@ default:
 # Run ruff check on src/ and tests/
 @lint:
     echo "🔍 Running ruff lint check..."
-    python -m ruff check src/ tests/ tools/lint_skills.py packaging/assemble_zip.py
+    python -m ruff check --config pyproject.toml src/ tests/ tools/lint_skills.py "{{ blender_plugins_root }}/addons/DCC-MCP-Blender/packaging/assemble_zip.py"
     echo "✅ Lint check passed"
 
 # Auto-fix ruff errors
 @lint-fix:
     echo "🔧 Auto-fixing ruff errors..."
-    python -m ruff check --fix src/ tests/ tools/lint_skills.py packaging/assemble_zip.py
+    python -m ruff check --fix --config pyproject.toml src/ tests/ tools/lint_skills.py "{{ blender_plugins_root }}/addons/DCC-MCP-Blender/packaging/assemble_zip.py"
     echo "✅ Lint errors fixed"
 
 # Lint SKILL.md files
@@ -71,14 +73,14 @@ lint-all: lint lint-skills
 # Usage: vx just prek   or   just prek
 @prek:
     echo "🔧 Auto-fixing ruff errors..."
-    python -m ruff check --fix src/ tests/ tools/lint_skills.py packaging/assemble_zip.py
+    python -m ruff check --fix --config pyproject.toml src/ tests/ tools/lint_skills.py "{{ blender_plugins_root }}/addons/DCC-MCP-Blender/packaging/assemble_zip.py"
     echo "🎨 Formatting with ruff..."
-    python -m ruff format src/ tests/ tools/lint_skills.py packaging/assemble_zip.py
+    python -m ruff format --config pyproject.toml src/ tests/ tools/lint_skills.py "{{ blender_plugins_root }}/addons/DCC-MCP-Blender/packaging/assemble_zip.py"
     echo "🔍 Running all lint checks..."
-    python -m ruff check src/ tests/ tools/lint_skills.py packaging/assemble_zip.py
+    python -m ruff check --config pyproject.toml src/ tests/ tools/lint_skills.py "{{ blender_plugins_root }}/addons/DCC-MCP-Blender/packaging/assemble_zip.py"
     python tools/lint_skills.py --warnings-as-errors
     echo "🧪 Running quick tests..."
-    python -m pytest tests/ -x -q --ignore=tests/test_e2e_blender_standalone.py 2>/dev/null || python -m pytest tests/ -x -q
+    python -m pytest tests/ "{{ blender_plugins_root }}/addons/DCC-MCP-Blender/tests/" -x -q --ignore=tests/test_e2e_blender_standalone.py 2>/dev/null || python -m pytest tests/ "{{ blender_plugins_root }}/addons/DCC-MCP-Blender/tests/" -x -q
     echo "✅ prek passed — safe to commit"
 
 # ============================================================================
@@ -94,13 +96,13 @@ lint-all: lint lint-skills
 # Run all quick tests (no blender required)
 @test-quick:
     echo "🧪 Running quick tests..."
-    python -m pytest tests/ -x -q
+    python -m pytest tests/ "{{ blender_plugins_root }}/addons/DCC-MCP-Blender/tests/" -x -q
     echo "✅ Quick tests passed"
 
 # Run tests with coverage
 @test-coverage:
     echo "🧪 Running tests with coverage..."
-    python -m pytest --cov=dcc_mcp_blender --cov-report=term-missing tests/
+    python -m pytest --cov=dcc_mcp_blender --cov-report=term-missing tests/ "{{ blender_plugins_root }}/addons/DCC-MCP-Blender/tests/"
     echo "✅ Tests complete with coverage report"
 
 # Run specific test file
@@ -283,7 +285,7 @@ _blender-addons-dir := _blender-scripts-dir + "/addons"
 # Usage: `just blender-addon-zip [platform] [output_dir]`.
 blender-addon-platform := if os() == "windows" { "win64" } else if os() == "macos" { "macos" } else { "linux" }
 blender-addon-zip platform=blender-addon-platform output_dir="dist_addon":
-    python packaging/assemble_zip.py --platform {{ platform }} --output-dir {{ output_dir }}
+    python "{{ blender_plugins_root }}/addons/DCC-MCP-Blender/packaging/assemble_zip.py" --platform {{ platform }} --output-dir {{ output_dir }}
 
 # Remove dev symlinks and addon files
 @blender-unlink:

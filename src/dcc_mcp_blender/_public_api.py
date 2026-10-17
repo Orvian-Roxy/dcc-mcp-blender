@@ -11,7 +11,7 @@ Both distribution channels must expose the *same* top-level names:
 The add-on entrypoint cannot ``import *`` this module eagerly: Blender imports
 every add-on module just to read ``bl_info``, so a heavy (or failing) import at
 that point would hide the add-on from Preferences entirely. It re-exports these
-names lazily instead — see ``packaging/addon_entry/__init__.py``.
+names lazily instead — see ``../blender-plugins/addons/DCC-MCP-Blender/packaging/addon_entry/__init__.py``.
 
 Every import below is relative on purpose. This module is executed both as
 ``dcc_mcp_blender._public_api`` and as

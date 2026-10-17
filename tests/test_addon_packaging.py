@@ -1,1 +1,0 @@
-../../blender-plugins/addons/DCC-MCP-Blender/tests/test_addon_packaging.py

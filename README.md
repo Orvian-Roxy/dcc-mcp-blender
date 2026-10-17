@@ -356,7 +356,7 @@ options below are for manual installation.
 
 Release ZIPs are Blender Extension packages for Blender 4.5+. They include `blender_manifest.toml` and the matching `dcc-mcp-core` wheel under `wheels/`, so Blender installs the Python dependency into the extension's isolated environment.
 
-The extension ZIP is assembled by `packaging/assemble_zip.py`. It resolves the latest compatible `dcc-mcp-core` wheel, places it under `wheels/`, and injects that wheel into `blender_manifest.toml`; Blender then installs it through the extension wheel mechanism instead of relying on global `pip` packages or `sys.path` edits. Build locally with `just blender-addon-zip` for the host platform, or `just blender-addon-zip win64 dist_addon` (replace `win64` with `linux` or `macos`) for an explicit target. See [`packaging/release_smoke_checklist.md`](packaging/release_smoke_checklist.md) for the manual smoke test procedure.
+The extension ZIP is assembled by `../blender-plugins/addons/DCC-MCP-Blender/packaging/assemble_zip.py`. It resolves the latest compatible `dcc-mcp-core` wheel, places it under `wheels/`, and injects that wheel into `blender_manifest.toml`; Blender then installs it through the extension wheel mechanism instead of relying on global `pip` packages or `sys.path` edits. Build locally with `just blender-addon-zip` for the host platform, or `just blender-addon-zip win64 dist_addon` (replace `win64` with `linux` or `macos`) for an explicit target. See [`packaging/release_smoke_checklist.md`](packaging/release_smoke_checklist.md) for the manual smoke test procedure.
 
 Native UI Control requires standalone `dcc-cua` 0.4.0 or newer on `PATH` (or
 `DCC_MCP_CUA_BINARY`). Core owns the `ui_control__*` contract; the Blender ZIP

@@ -81,7 +81,7 @@ python_functions = ["test_*"]
 addopts = "-v --tb=short -m 'not e2e and not packaging'"
 markers = [
     "e2e: end-to-end tests that require a real Blender standalone interpreter",
-    "packaging: tests for packaging/assemble_zip.py that require network access to PyPI",
+    "packaging: tests for the canonical Blender plugin assembler that require network access to PyPI",
 ]
 
 [tool.coverage.run]

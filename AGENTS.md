@@ -100,7 +100,8 @@ execute_python only when no typed skill fits
 | `src/dcc_mcp_blender/skills/SKILLS_INDEX.md` | Authoritative skill + tool index, staged loading |
 | `tests/` | Unit, contract, packaging and e2e tests |
 | `tools/` | Skill linter, version probe, Windows dev-link helpers |
-| `packaging/` | Addon ZIP assembly (`assemble_zip.py`) + release smoke checklist |
+| `../blender-plugins/addons/DCC-MCP-Blender/` | Addon source, manifest, ZIP assembler and packaging checks |
+| `packaging/` | Release smoke checklist |
 | `docs/` | Capability coverage, protocol compatibility, vendor integrations |
 
 ## Reference material (follow, do not inline)

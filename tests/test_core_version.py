@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import pathlib
 import re
 
@@ -14,7 +15,15 @@ CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
 
 def _load_assemble_zip_module():
-    path = ROOT / "packaging" / "assemble_zip.py"
+    path = (
+        (
+            pathlib.Path(os.environ.get("BLENDER_PLUGINS_ROOT", str(ROOT.parent / "blender-plugins")))
+            / "addons"
+            / "DCC-MCP-Blender"
+        )
+        / "packaging"
+        / "assemble_zip.py"
+    )
     spec = importlib.util.spec_from_file_location("assemble_zip_for_tests", str(path))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

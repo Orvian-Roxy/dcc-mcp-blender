@@ -21,6 +21,10 @@ permissions:
   attestations: write
   actions: read
 
+env:
+  BLENDER_PLUGINS_ROOT: ${{ github.workspace }}/blender-plugins
+  DCC_MCP_BLENDER_SOURCE: ${{ github.workspace }}
+
 jobs:
   # ── 1. release-please ───────────────────────────────────────────────────────
   release-please:
@@ -115,6 +119,13 @@ jobs:
         with:
           ref: ${{ inputs.tag_name || github.ref }}
 
+      - name: Checkout canonical Blender plugins
+        uses: actions/checkout@v6
+        with:
+          repository: Orvian-Roxy/blender-plugins
+          ref: ${{ vars.BLENDER_PLUGINS_REF || 'main' }}
+          path: blender-plugins
+
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
@@ -125,7 +136,7 @@ jobs:
       - name: Assemble addon ZIP
         shell: bash
         run: |
-          python packaging/assemble_zip.py \
+          python blender-plugins/addons/DCC-MCP-Blender/packaging/assemble_zip.py \
             --platform ${{ matrix.platform }} \
             --output-dir dist_addon/
 

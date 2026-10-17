@@ -18,7 +18,16 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 ROOT = pathlib.Path(__file__).parent.parent
-ADDON_ENTRY = ROOT / "packaging" / "addon_entry" / "__init__.py"
+ADDON_ENTRY = (
+    (
+        pathlib.Path(os.environ.get("BLENDER_PLUGINS_ROOT", str(ROOT.parent / "blender-plugins")))
+        / "addons"
+        / "DCC-MCP-Blender"
+    )
+    / "packaging"
+    / "addon_entry"
+    / "__init__.py"
+)
 
 USER_LEVEL_ROOT = os.path.join("profile", "extensions", "bl_ext", "user_default")
 

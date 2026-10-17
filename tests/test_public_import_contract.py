@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import importlib
 import importlib.util
+import os
 import pathlib
 import sys
 from types import ModuleType, SimpleNamespace
@@ -26,7 +27,16 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 ROOT = pathlib.Path(__file__).parent.parent
-ADDON_ENTRY = ROOT / "packaging" / "addon_entry" / "__init__.py"
+ADDON_ENTRY = (
+    (
+        pathlib.Path(os.environ.get("BLENDER_PLUGINS_ROOT", str(ROOT.parent / "blender-plugins")))
+        / "addons"
+        / "DCC-MCP-Blender"
+    )
+    / "packaging"
+    / "addon_entry"
+    / "__init__.py"
+)
 SRC_ROOT = ROOT / "src" / "dcc_mcp_blender"
 PUBLIC_API = SRC_ROOT / "_public_api.py"
 

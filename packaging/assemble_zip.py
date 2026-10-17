@@ -1,1 +1,0 @@
-../../blender-plugins/addons/DCC-MCP-Blender/packaging/assemble_zip.py
