@@ -364,7 +364,9 @@ class TestGatewayRemotePublicOptions:
         from_env = MagicMock(side_effect=AssertionError("No Core options should initialize"))
         monkeypatch.setattr(dispatcher, "create_dispatcher", create_dispatcher)
         monkeypatch.setattr(srv_mod, "DccServerOptions", SimpleNamespace(from_env=from_env))
-        monkeypatch.setattr(srv_mod, "_server_instance", None)
+        monkeypatch.setattr(
+            srv_mod, "_server_manager", srv_mod._ServerLeaseManager(srv_mod._require_blender_main_thread)
+        )
 
         with pytest.raises(ValueError):
             getattr(srv_mod, entrypoint)(**remote_options)
@@ -419,7 +421,9 @@ class TestGatewayRemotePublicOptions:
 
         fake_server = MagicMock()
         factory = MagicMock(return_value=fake_server)
-        monkeypatch.setattr(srv_mod, "_server_instance", None)
+        monkeypatch.setattr(
+            srv_mod, "_server_manager", srv_mod._ServerLeaseManager(srv_mod._require_blender_main_thread)
+        )
         monkeypatch.setattr(srv_mod, "BlenderMcpServer", factory)
 
         result = srv_mod.start_server(
@@ -453,12 +457,14 @@ class TestGatewayRemotePublicOptions:
 
         existing = SimpleNamespace(is_running=True)
         factory = MagicMock()
-        monkeypatch.setattr(srv_mod, "_server_instance", existing)
+        manager = srv_mod._ServerLeaseManager(srv_mod._require_blender_main_thread)
+        manager.obtain(lambda: existing, lambda _: None, lease=False, wait_timeout=0, remote_requested=False)
+        monkeypatch.setattr(srv_mod, "_server_manager", manager)
         monkeypatch.setattr(srv_mod, "BlenderMcpServer", factory)
 
         with pytest.raises(RuntimeError):
             srv_mod.start_server(**remote_options)
-        assert srv_mod._server_instance is existing
+        assert srv_mod.get_server() is existing
         factory.assert_not_called()
 
     def test_running_singleton_keeps_default_idempotence(self, monkeypatch):
@@ -468,7 +474,9 @@ class TestGatewayRemotePublicOptions:
 
         existing = SimpleNamespace(is_running=True)
         factory = MagicMock()
-        monkeypatch.setattr(srv_mod, "_server_instance", existing)
+        manager = srv_mod._ServerLeaseManager(srv_mod._require_blender_main_thread)
+        manager.obtain(lambda: existing, lambda _: None, lease=False, wait_timeout=0, remote_requested=False)
+        monkeypatch.setattr(srv_mod, "_server_manager", manager)
         monkeypatch.setattr(srv_mod, "BlenderMcpServer", factory)
 
         assert srv_mod.start_server(gateway_remote_host=None, gateway_remote_port=None) is existing
@@ -906,13 +914,12 @@ class TestModuleSingleton:
         # ensure clean state
         from dcc_mcp_blender import server as srv_mod
 
-        srv_mod._server_instance = None
+        srv_mod._server_manager = srv_mod._ServerLeaseManager(srv_mod._require_blender_main_thread)
 
     def teardown_method(self):
         from dcc_mcp_blender import server as srv_mod
 
-        if srv_mod._server_instance is not None:
-            srv_mod.stop_server()
+        srv_mod.stop_server()
 
     def test_start_stop(self):
         from dcc_mcp_blender.server import get_server, start_server, stop_server
