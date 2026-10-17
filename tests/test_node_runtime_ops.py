@@ -58,14 +58,14 @@ def host(monkeypatch):
     owner = NS(name="Face", node_tree=tree, library=None, is_editable=True, users=1)
     materials = Collection([owner])
 
-    def duplicate():
-        result = copy.deepcopy(owner)
+    def duplicate(source):
+        result = copy.deepcopy(source)
         result.name = ".validation"
-        result.copy = duplicate
+        result.copy = lambda: duplicate(result)
         materials.append(result)
         return result
 
-    owner.copy = duplicate
+    owner.copy = lambda: duplicate(owner)
     data = NS(
         materials=materials,
         worlds=Collection(),
@@ -429,3 +429,59 @@ def test_schema_excludes_class_icon_catalog_but_preserves_node_enum(host):
     records = {item["identifier"]: item for item in result["context"]["items"] if item["kind"] == "PROPERTY"}
     assert "bl_icon" not in records
     assert records["data_type"]["enum_items"][0]["identifier"] == "FLOAT"
+
+
+def test_real_project_helper_accepts_explicit_material_without_shader_info(host):
+    from tests.native_node_project import run_project_node_check
+
+    bpy, owner, _ = host
+    owner.node_tree.as_pointer = lambda: 101
+    prop = NS(
+        name="default_value",
+        identifier="default_value",
+        type="FLOAT",
+        is_readonly=False,
+        array_length=0,
+        hard_min=0.0,
+        hard_max=1.0,
+    )
+    for node in owner.node_tree.nodes:
+        node.inputs[0].bl_rna.properties = Collection([prop])
+    bpy.context = NS(scene=NS(objects=[NS(material_slots=[NS(material=owner)])]))
+    result = run_project_node_check(material_name="Face")
+    assert result["passed"] and result["npr_status"] == "absent"
+    assert result["npr_type"] is None and result["npr_schema_page"] is None
+    assert result["same_material_query_and_patch"]
+    assert result["readback"]["requested"] == pytest.approx(0.51)
+    assert owner.node_tree.nodes[0].inputs[0].default_value == 0.5
+    assert owner.node_tree.nodes[0].label == "human label"
+
+
+def test_project_helper_reports_distinct_complex_and_patch_materials(host):
+    from tests.native_node_project import run_project_node_check
+
+    bpy, face, _ = host
+    layer = face.copy()
+    layer.name = "Layer"
+    face.node_tree.as_pointer = lambda: 101
+    layer.node_tree.as_pointer = lambda: 102
+    face.node_tree.nodes[0].inputs[0].default_value = 0.75
+    prop = NS(
+        name="default_value",
+        identifier="default_value",
+        type="FLOAT",
+        is_readonly=False,
+        array_length=0,
+        hard_min=0.0,
+        hard_max=1.0,
+    )
+    for node in layer.node_tree.nodes:
+        node.inputs[0].bl_rna.properties = Collection([prop])
+    bpy.context = NS(scene=NS(objects=[NS(material_slots=[NS(material=face), NS(material=layer)])]))
+    result = run_project_node_check(material_name="Face", patch_material_name="Layer")
+    assert result["source_material"] == "Face"
+    assert result["patched_source_material"] == "Layer"
+    assert not result["same_material_query_and_patch"]
+    assert result["readback"]["previous"] == 0.5
+    assert face.node_tree.nodes[0].inputs[0].default_value == 0.75
+    assert layer.node_tree.nodes[0].inputs[0].default_value == 0.5
