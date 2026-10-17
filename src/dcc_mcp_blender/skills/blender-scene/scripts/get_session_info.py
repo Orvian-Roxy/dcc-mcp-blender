@@ -16,6 +16,8 @@ def get_session_info() -> dict:
     try:
         import bpy
 
+        from dcc_mcp_blender._scene_files import file_state
+
         scene = bpy.context.scene
         info = {
             "blender_version": ".".join(str(v) for v in bpy.app.version),
@@ -24,6 +26,7 @@ def get_session_info() -> dict:
             "scene_name": scene.name,
             "scene_file": bpy.data.filepath or "<unsaved>",
             "scene_modified": bpy.data.is_dirty,
+            "file_state": file_state(),
             "fps": scene.render.fps,
             "frame_current": scene.frame_current,
             "frame_start": scene.frame_start,

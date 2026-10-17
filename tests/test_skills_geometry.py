@@ -42,14 +42,21 @@ def test_create_sphere_uses_context_object_fallback():
     assert result["context"]["object_name"] == "Fallback Sphere"
 
 
-def test_save_blend_calls_save_as_mainfile():
+def test_save_blend_calls_save_as_mainfile(tmp_path):
     mock_bpy = make_mock_bpy()
+    target = tmp_path / "out.blend"
 
-    result = load_and_call("blender-geometry/scripts/save_blend.py", mock_bpy, path="/tmp/out.blend")
+    def save(**kwargs):
+        target.write_bytes(b"saved geometry")
+        mock_bpy.data.filepath = str(target)
+        return {"FINISHED"}
+
+    mock_bpy.ops.wm.save_as_mainfile.side_effect = save
+    result = load_and_call("blender-geometry/scripts/save_blend.py", mock_bpy, path=str(target))
 
     assert result["success"] is True
-    assert result["context"]["filepath"] == "/tmp/out.blend"
-    mock_bpy.ops.wm.save_as_mainfile.assert_called_once_with(filepath="/tmp/out.blend")
+    assert result["context"]["filepath"] == str(target)
+    mock_bpy.ops.wm.save_as_mainfile.assert_called_once_with(filepath=str(target))
 
 
 def test_file_exists_reports_size(tmp_path):

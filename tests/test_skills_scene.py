@@ -80,21 +80,38 @@ class TestListObjects:
 class TestNewScene:
     def test_calls_read_factory_settings(self):
         bpy = make_mock_bpy()
+        bpy.ops.wm.read_factory_settings.return_value = {"FINISHED"}
         result = load_and_call("blender-scene/scripts/new_scene.py", bpy)
         assert result["success"] is True
         bpy.ops.wm.read_factory_settings.assert_called_once_with(use_empty=True)
 
 
 class TestSaveScene:
-    def test_save_to_explicit_path(self):
+    def test_save_to_explicit_path(self, tmp_path):
         bpy = make_mock_bpy()
-        result = load_and_call("blender-scene/scripts/save_scene.py", bpy, filepath="/tmp/test.blend")
-        assert result["success"] is True
-        bpy.ops.wm.save_as_mainfile.assert_called_once_with(filepath="/tmp/test.blend")
+        target = tmp_path / "test.blend"
 
-    def test_save_existing_file(self):
+        def save(**kwargs):
+            target.write_bytes(b"saved scene")
+            bpy.data.filepath = str(target)
+            return {"FINISHED"}
+
+        bpy.ops.wm.save_as_mainfile.side_effect = save
+        result = load_and_call("blender-scene/scripts/save_scene.py", bpy, filepath=str(target))
+        assert result["success"] is True
+        bpy.ops.wm.save_as_mainfile.assert_called_once_with(filepath=str(target))
+
+    def test_save_existing_file(self, tmp_path):
         bpy = make_mock_bpy()
-        bpy.data.filepath = "/existing/scene.blend"
+        target = tmp_path / "scene.blend"
+        target.write_bytes(b"old")
+        bpy.data.filepath = str(target)
+
+        def save():
+            target.write_bytes(b"updated scene")
+            return {"FINISHED"}
+
+        bpy.ops.wm.save_mainfile.side_effect = save
         result = load_and_call("blender-scene/scripts/save_scene.py", bpy)
         assert result["success"] is True
         bpy.ops.wm.save_mainfile.assert_called_once()
@@ -109,9 +126,11 @@ class TestSaveScene:
 class TestOpenScene:
     def test_opens_blend_file(self):
         bpy = make_mock_bpy()
+        bpy.ops.wm.open_mainfile.return_value = {"FINISHED"}
+        bpy.data.filepath = "/path/to/scene.blend"
         result = load_and_call("blender-scene/scripts/open_scene.py", bpy, filepath="/path/to/scene.blend")
         assert result["success"] is True
-        bpy.ops.wm.open_mainfile.assert_called_once_with(filepath="/path/to/scene.blend")
+        bpy.ops.wm.open_mainfile.assert_called_once_with(filepath="/path/to/scene.blend", load_ui=False)
 
 
 class TestGetSceneInfo:

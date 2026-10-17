@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_ROOT = REPO_ROOT / "src"
 
@@ -208,3 +210,17 @@ def load_and_call(
         spec.loader.exec_module(mod)
         fn = getattr(mod, func_name)
         return fn(**kwargs)
+
+
+# Every test creates an independent fake host, while production has one process.
+@pytest.fixture(autouse=True)
+def isolated_managed_write_state(monkeypatch):
+    from dcc_mcp_blender import _managed_writes
+
+    monkeypatch.setattr(_managed_writes, "_write_revision", 0)
+    monkeypatch.setattr(_managed_writes, "_saved_revision", 0)
+    token = _managed_writes._call_prior_revision.set(None)
+    generic_token = _managed_writes._generic_write_active.set(False)
+    yield
+    _managed_writes._generic_write_active.reset(generic_token)
+    _managed_writes._call_prior_revision.reset(token)

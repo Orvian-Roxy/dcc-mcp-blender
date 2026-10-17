@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dcc_mcp_core.skill import skill_entry, skill_error, skill_exception, skill_success
+from dcc_mcp_core.skill import skill_entry
 
 
 def open_scene(filepath: str) -> dict:
@@ -14,20 +14,9 @@ def open_scene(filepath: str) -> dict:
     Returns:
         ActionResultModel dict.
     """
-    try:
-        import bpy
+    from dcc_mcp_blender._scene_files import open_scene as guarded_open
 
-        bpy.ops.wm.open_mainfile(filepath=filepath)
-        return skill_success(
-            f"Opened scene: {filepath}",
-            filepath=filepath,
-            scene_name=bpy.context.scene.name,
-            prompt="Scene opened. Use list_objects to see the scene contents.",
-        )
-    except ImportError:
-        return skill_error("Blender not available", "bpy could not be imported")
-    except Exception as exc:
-        return skill_exception(exc, message=f"Failed to open scene: {filepath}")
+    return guarded_open(filepath)
 
 
 @skill_entry
