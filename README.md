@@ -426,6 +426,10 @@ print(server.mcp_url)
 dcc_mcp_blender.stop_server()
 ```
 
+For multiple UI views, use [`acquire_server` and explicit server leases](docs/server-leases.md)
+so borrowed services are never stopped by a view. A broker retains creator
+ownership and retries pending cleanup on the host main thread.
+
 ### Gateway compatibility
 
 Core 0.20.42 does **not** expose the public remote-listener options used below.

@@ -48,6 +48,8 @@ def test_all_exports_in_package():
         "skill_entry",
         # server
         "BlenderMcpServer",
+        "BlenderServerLease",
+        "acquire_server",
         "start_server",
         "stop_server",
         "get_server",

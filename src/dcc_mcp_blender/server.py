@@ -25,6 +25,8 @@ from __future__ import annotations
 import inspect
 import logging
 import os
+import sys
+import threading
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -41,6 +43,7 @@ from . import (
     _semantic_index,
 )
 from .__version__ import __version__
+from ._server_leases import BlenderServerLease, _ServerLeaseManager
 from .context_snapshot import BlenderContextSnapshotProvider, collect_gateway_metadata
 from .host import BlenderInlineCallableDispatcher
 
@@ -770,7 +773,15 @@ class BlenderMcpServer(DccServerBase):
 
 # ── module-level singleton helpers ────────────────────────────────────────────
 
-_server_instance: Optional[BlenderMcpServer] = None
+
+def _require_blender_main_thread() -> None:
+    # The public import gate already imports bpy in a real Blender host. Avoid
+    # touching native bpy state or installing a timer merely to check affinity.
+    if "bpy" in sys.modules and threading.current_thread() is not threading.main_thread():
+        raise RuntimeError("Blender server creation and teardown require Blender's main thread")
+
+
+_server_manager = _ServerLeaseManager(_require_blender_main_thread)
 
 
 def start_server(
@@ -824,45 +835,61 @@ def start_server(
     Returns:
         The running :class:`BlenderMcpServer` instance.
     """
-    global _server_instance  # noqa: PLW0603
-    if _server_instance is not None and _server_instance.is_running:
-        if gateway_remote_host is not None or gateway_remote_port is not None:
-            raise RuntimeError("Stop the running Blender server before configuring remote gateway options")
-        return _server_instance
+    return _obtain_server(locals(), lease=False, wait_timeout=5.0)
 
-    _server_instance = BlenderMcpServer(
-        port=port,
-        extra_skill_paths=extra_skill_paths,
-        gateway_port=gateway_port,
-        registry_dir=registry_dir,
-        dcc_version=dcc_version,
-        scene=scene,
-        enable_gateway_failover=enable_gateway_failover,
-        metrics_enabled=metrics_enabled,
-        job_storage_path=job_storage_path,
-        enable_workflows=enable_workflows,
-        dispatcher=dispatcher,
-        execution_bridge=execution_bridge,
-        gateway_remote_host=gateway_remote_host,
-        gateway_remote_port=gateway_remote_port,
+
+def acquire_server(*args: Any, wait_timeout: float = 5.0, **kwargs: Any) -> BlenderServerLease:
+    """Acquire the singleton using the same arguments as :func:`start_server`.
+
+    The creation winner owns the server. Reusers borrow it and must release
+    their own handles. Options configure creation only; an existing server is
+    reused with legacy start semantics (explicit remote reconfiguration still
+    fails). Worker waits are bounded; Blender's main thread never blocks on a
+    lifecycle transition. Only the main thread may create or stop a real host.
+
+    A pending owner must be retained by a broker independent of any view and
+    retried on its host-main-thread tick when ``shutdown_ready`` is true.
+    No finalizer, worker callback, or automatic timer performs this cleanup.
+    """
+    bound = inspect.signature(start_server).bind(*args, **kwargs)
+    bound.apply_defaults()
+    return _obtain_server(dict(bound.arguments), lease=True, wait_timeout=wait_timeout)
+
+
+def _obtain_server(arguments: Dict[str, Any], *, lease: bool, wait_timeout: float) -> Any:
+    options = dict(arguments)
+    register_builtins = options.pop("register_builtins")
+    include_bundled = options.pop("include_bundled")
+    enable_hot_reload = options.pop("enable_hot_reload")
+
+    def create() -> BlenderMcpServer:
+        return BlenderMcpServer(**options)
+
+    def start(server: BlenderMcpServer) -> None:
+        if register_builtins:
+            server.register_builtin_actions(include_bundled=include_bundled)
+        if enable_hot_reload:
+            server.enable_hot_reload()
+        server.start()
+
+    return _server_manager.obtain(
+        create,
+        start,
+        lease=lease,
+        wait_timeout=wait_timeout,
+        remote_requested=options["gateway_remote_host"] is not None or options["gateway_remote_port"] is not None,
     )
-    if register_builtins:
-        _server_instance.register_builtin_actions(include_bundled=include_bundled)
-    if enable_hot_reload:
-        _server_instance.enable_hot_reload()
-    _server_instance.start()
-    return _server_instance
 
 
 def stop_server() -> None:
-    """Stop the running Blender MCP server."""
-    global _server_instance  # noqa: PLW0603
-    if _server_instance is None:
-        return
-    _server_instance.stop()
-    _server_instance = None
+    """Force-stop the singleton, revoking every owner and borrow lease.
+
+    Failed cleanup retains the exact instance for a later ``stop_server``
+    retry; it cannot be replaced merely because its HTTP listener has stopped.
+    """
+    _server_manager.stop()
 
 
 def get_server() -> Optional[BlenderMcpServer]:
-    """Return the current server instance, or ``None`` if not started."""
-    return _server_instance
+    """Return only the ready singleton; lifecycle transitions return ``None``."""
+    return _server_manager.get_server()

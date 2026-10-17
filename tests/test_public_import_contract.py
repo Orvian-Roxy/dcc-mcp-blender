@@ -142,6 +142,8 @@ def test_extension_channel_resolves_real_callables(extension_addon):
     server = extension_addon._addon_module("server")
     host = extension_addon._addon_module("host")
 
+    assert public.acquire_server is server.acquire_server
+    assert public.BlenderServerLease is server.BlenderServerLease
     assert public.start_server is server.start_server
     assert public.stop_server is server.stop_server
     assert public.get_server is server.get_server
@@ -333,3 +335,37 @@ def test_submodule_imports_do_not_recurse_into_the_public_api(extension_addon):
 
     capability = extension_addon._addon_module("_capability_manifest")
     assert capability.__name__ == f"{EXTENSION_NAME}._capability_manifest"
+
+
+def test_canonical_extension_and_public_facades_share_lease_state(extension_addon, monkeypatch):
+    """Normal aliases share one manager; this does not simulate a real host."""
+    extension_addon._install_runtime_import_aliases()
+    public = importlib.import_module("dcc_mcp_blender")
+    canonical = extension_addon._addon_module("server")
+    manager = canonical._ServerLeaseManager(canonical._require_blender_main_thread)
+    monkeypatch.setattr(canonical, "_server_manager", manager)
+
+    class FakeServer:
+        is_running = False
+        stops = 0
+
+        def __init__(self, **kwargs):
+            pass
+
+        def start(self):
+            self.is_running = True
+
+        def stop(self):
+            self.stops += 1
+            self.is_running = False
+
+    monkeypatch.setattr(canonical, "BlenderMcpServer", FakeServer)
+    owner = public.acquire_server(register_builtins=False)
+    borrow = canonical.acquire_server(register_builtins=False)
+    assert owner.server is borrow.server
+    assert public.get_server() is canonical.get_server()
+    assert owner.release() is False
+    assert borrow.release() is True
+    assert owner.shutdown_ready
+    assert owner.release() is True
+    assert owner.server.stops == 1

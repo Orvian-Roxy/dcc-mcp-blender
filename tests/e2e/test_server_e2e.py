@@ -102,6 +102,113 @@ class TestServerLifecycleE2E:
             dcc_mcp_blender.stop_server()
 
 
+class TestServerLeaseE2E:
+    """Actual background-host service ownership, not GUI or view-broker QA."""
+
+    @staticmethod
+    def initialize(server):
+        import json
+        import urllib.request
+
+        request = urllib.request.Request(
+            server.mcp_url,
+            data=json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-03-26",
+                        "capabilities": {},
+                        "clientInfo": {"name": "lease-e2e", "version": "1"},
+                    },
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            payload = json.loads(response.read())
+        assert payload["result"]["serverInfo"]["name"] == "dcc-mcp-blender"
+
+    def setup_method(self):
+        import dcc_mcp_blender
+
+        dcc_mcp_blender.stop_server()
+
+    def teardown_method(self):
+        import dcc_mcp_blender
+
+        dcc_mcp_blender.stop_server()
+
+    @staticmethod
+    def acquire():
+        import dcc_mcp_blender
+
+        return dcc_mcp_blender.acquire_server(
+            port=0,
+            gateway_port=0,
+            enable_gateway_failover=False,
+            register_builtins=False,
+        )
+
+    def test_owner_waits_for_views_and_last_worker_release_preserves_http(self):
+        import threading
+
+        import dcc_mcp_blender
+
+        owner = self.acquire()
+        first = dcc_mcp_blender.acquire_server()
+        last = dcc_mcp_blender.acquire_server()
+        assert owner.owns_server and not first.owns_server and not last.owns_server
+        assert owner.server is first.server is last.server
+        assert first.release()
+        self.initialize(last.server)
+        assert owner.release() is False
+        assert owner.pending_shutdown and not owner.shutdown_ready
+        assert dcc_mcp_blender.get_server() is None
+        result = []
+        worker = threading.Thread(target=lambda: result.append(last.release()))
+        worker.start()
+        worker.join(5)
+        assert not worker.is_alive()
+        assert result == [True]
+        assert owner.shutdown_ready
+        assert owner.server.is_running
+        self.initialize(owner.server)
+        assert owner.release()
+        assert not owner.server.is_running
+
+    def test_last_borrow_of_legacy_service_never_stops_it(self):
+        import dcc_mcp_blender
+
+        server = dcc_mcp_blender.start_server(
+            port=0,
+            gateway_port=0,
+            enable_gateway_failover=False,
+            register_builtins=False,
+        )
+        borrow = dcc_mcp_blender.acquire_server()
+        assert not borrow.owns_server
+        assert borrow.release()
+        assert dcc_mcp_blender.get_server() is server
+        assert server.is_running
+        self.initialize(server)
+
+    def test_revoked_native_handles_cannot_stop_replacement(self):
+        import dcc_mcp_blender
+
+        old_owner = self.acquire()
+        old_borrow = dcc_mcp_blender.acquire_server()
+        dcc_mcp_blender.stop_server()
+        owner = self.acquire()
+        assert owner.generation > old_owner.generation
+        assert old_owner.release() and old_borrow.release()
+        assert owner.valid and owner.server.is_running
+        self.initialize(owner.server)
+        assert owner.release()
+
+
 # ── Progressive skill loading ─────────────────────────────────────────────────
 
 
