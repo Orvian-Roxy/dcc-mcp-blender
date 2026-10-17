@@ -79,3 +79,11 @@ tools:
     read_only: true
     destructive: false
     idempotent: true
+  - name: close_scene
+    description: "Explicitly close Blender after saving scene and image edits"
+    source_file: scripts/close_scene.py
+    execution: sync
+    affinity: main
+    read_only: false
+    destructive: true
+    idempotent: false

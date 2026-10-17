@@ -110,9 +110,13 @@ def test_extension_namespace_import_does_not_create_top_level_alias(monkeypatch)
         assert public_server._dcc_mcp_alias_target is server
 
         lifecycle_calls = []
-        fake_bpy.ops = SimpleNamespace(
-            wm=SimpleNamespace(read_factory_settings=lambda **kwargs: lifecycle_calls.append(("reset", kwargs)))
-        )
+        fake_bpy.data = SimpleNamespace(is_dirty=False, filepath="", images=[])
+
+        def reset_scene(**kwargs):
+            lifecycle_calls.append(("reset", kwargs))
+            return {"FINISHED"}
+
+        fake_bpy.ops = SimpleNamespace(wm=SimpleNamespace(read_factory_settings=reset_scene))
         dispatcher = SimpleNamespace(start_pump=lambda: lifecycle_calls.append(("start_pump", None)))
         readiness = SimpleNamespace(
             revalidate_dispatcher=lambda: lifecycle_calls.append(("revalidate_dispatcher", None))
@@ -129,7 +133,7 @@ def test_extension_namespace_import_does_not_create_top_level_alias(monkeypatch)
 
         result = script.new_scene()
 
-        assert result["success"] is True
+        assert result["success"] is True, result.get("_meta")
         assert lifecycle_calls == [
             ("reset", {"use_empty": True}),
             ("start_pump", None),
