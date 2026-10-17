@@ -141,11 +141,12 @@ class TestAddonDiagnostics:
         state = _install_fake_addon_utils(monkeypatch, enabled=False)
         bpy = make_mock_bpy()
 
-        def _enable(module):
+        def _enable(module, **kwargs):
             assert module == "fake_addon"
             state.update({"enabled": True, "loaded": True})
+            return SimpleNamespace(__name__=module)
 
-        bpy.ops.preferences.addon_enable.side_effect = _enable
+        sys.modules["addon_utils"].enable = _enable
 
         result = load_and_call(
             "blender-dev/scripts/enable_addon.py",
@@ -161,11 +162,11 @@ class TestAddonDiagnostics:
         state = _install_fake_addon_utils(monkeypatch, enabled=True)
         bpy = make_mock_bpy()
 
-        def _disable(module):
+        def _disable(module, **kwargs):
             assert module == "fake_addon"
             state.update({"enabled": False, "loaded": False})
 
-        bpy.ops.preferences.addon_disable.side_effect = _disable
+        sys.modules["addon_utils"].disable = _disable
 
         result = load_and_call(
             "blender-dev/scripts/disable_addon.py",

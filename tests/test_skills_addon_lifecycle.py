@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import sys
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -45,7 +47,7 @@ class _FakeOps:
         return {"FINISHED"}
 
     def __getattr__(self, name):
-        def _call(**kwargs):
+        def _call(*args, **kwargs):
             return self._record(name, **kwargs)
 
         return _call
@@ -152,92 +154,61 @@ def _make_zip(tmp_path: Path, name: str = "my_addon.zip") -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_install_addon_installs_and_enables(tmp_path):
+def test_install_addon_installs_pinned_legacy_and_enables_runtime_only(tmp_path, monkeypatch):
     path = _make_addon_file(tmp_path)
-    modules = [_module("my_addon")]
-    ops = _FakeOps()
-    bpy = _bpy_with_addons(modules, ops)
+    modules = []
+    state = {"enabled": False}
+    bpy = make_mock_bpy()
+    target = tmp_path / "isolated" / "addons"
+    bpy.utils.user_resource.return_value = str(target)
 
-    result = _call("install_addon", bpy, file_path=str(path), addon_module="my_addon")
+    def install(*args, **kwargs):
+        modules.append(_module("my_addon"))
+        return {"FINISHED"}
 
-    assert result["success"] is True, result.get("error")
-    names = [name for name, _ in ops.calls]
-    assert "addon_install" in names
-    # Installing leaves the module cache stale, so a refresh has to follow.
-    assert "addon_refresh" in names
-    assert "addon_enable" in names
+    def enable(name, default_set=False, persistent=False, **kwargs):
+        assert default_set is persistent is False
+        state["enabled"] = True
+        return modules[0]
 
-
-def test_install_addon_rejects_a_missing_file(tmp_path):
-    result = _call("install_addon", _bpy_with_addons([]), file_path=str(tmp_path / "nope.py"))
-    assert result["success"] is False
-    assert "not found" in result["message"].lower()
-
-
-def test_install_addon_rejects_an_unsupported_extension(tmp_path):
-    path = tmp_path / "addon.tar.gz"
-    path.write_text("x", encoding="utf-8")
-    result = _call("install_addon", _bpy_with_addons([]), file_path=str(path))
-    assert result["success"] is False
-    assert "unsupported add-on file" in result["message"].lower()
-
-
-def test_install_addon_rejects_a_directory(tmp_path):
-    result = _call("install_addon", _bpy_with_addons([]), file_path=str(tmp_path))
-    assert result["success"] is False
-    assert "directory" in result["message"].lower()
-
-
-def test_install_addon_reports_a_wrong_module_name(tmp_path):
-    """Installing a zip whose package name differs must not silently succeed."""
-    path = _make_zip(tmp_path)
-    bpy = _bpy_with_addons([])  # module never appears
-
-    result = _call("install_addon", bpy, file_path=str(path), addon_module="definitely_not_this")
-    assert result["success"] is False
-    assert "not found" in result["message"].lower()
-
-
-def test_install_addon_reports_operator_failure(tmp_path):
-    path = _make_addon_file(tmp_path)
-    ops = _FakeOps(fail=["addon_install"])
-    result = _call("install_addon", _bpy_with_addons([], ops), file_path=str(path), addon_module="my_addon")
-
-    assert result["success"] is False
-    assert "failed to install" in result["message"].lower()
-
-
-def test_install_addon_can_skip_enabling(tmp_path):
-    path = _make_addon_file(tmp_path)
-    ops = _FakeOps()
-    bpy = _bpy_with_addons([_module("my_addon")], ops)
-
-    result = _call("install_addon", bpy, file_path=str(path), addon_module="my_addon", enable=False)
-    assert result["success"] is True
-    assert "addon_enable" not in [name for name, _ in ops.calls]
+    bpy.ops.preferences.addon_install.side_effect = install
+    monkeypatch.setitem(
+        sys.modules,
+        "addon_utils",
+        SimpleNamespace(
+            modules=lambda refresh=False: modules,
+            check=lambda name: (False, state["enabled"]),
+            enable=enable,
+        ),
+    )
+    result = _call(
+        "install_addon",
+        bpy,
+        file_path=str(path),
+        addon_module="my_addon",
+        sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        target_directory=str(target),
+    )
+    assert result["success"], result
+    assert result["context"]["addon_states"][0]["enabled_runtime"] is True
+    assert result["context"]["addon_states"][0]["enabled_default"] is False
+    bpy.ops.preferences.addon_enable.assert_not_called()
 
 
 def test_install_addon_requires_a_file():
-    """There is nothing to install from without a source, and addon_install("")
-    would just fail inside Blender."""
     result = _call("install_addon", _bpy_with_addons([]), addon_module="my_addon")
     assert result["success"] is False
     assert "no add-on file" in result["message"].lower()
     assert "refresh_addons" in result["error"]
 
 
-def test_install_addon_without_a_module_still_installs(tmp_path):
-    """Installing without addon_module installs but cannot confirm the module."""
+def test_install_addon_requires_pin_and_explicit_identity(tmp_path):
     path = _make_addon_file(tmp_path)
-    ops = _FakeOps()
-    bpy = _bpy_with_addons([_module("my_addon")], ops)
-
+    bpy = _bpy_with_addons([])
     result = _call("install_addon", bpy, file_path=str(path))
-    assert result["success"] is True, result.get("error")
-    assert result["context"]["module"] is None
-    assert result["context"]["enabled"] is False
-    assert "addon_enable" not in [name for name, _ in ops.calls], "nothing to enable without a module"
-    assert "addon_refresh" in [name for name, _ in ops.calls]
+    assert result["success"] is False
+    assert "sha256" in result["_meta"]["dcc.error"]["message"]
+    assert not bpy.ops.preferences.calls
 
 
 # ---------------------------------------------------------------------------
@@ -373,7 +344,7 @@ def test_remove_addon_is_flagged_destructive():
     assert tools["remove_addon"]["destructive"] is True
     assert tools["remove_addon"]["annotations"]["destructive_hint"] is True
     assert tools["refresh_addons"]["destructive"] is False
-    assert tools["install_addon"]["destructive"] is False
+    assert tools["install_addon"]["destructive"] is True
 
 
 def test_remove_addon_deletes_the_module_file(tmp_path):

@@ -15,13 +15,15 @@ def main(
     repository: Optional[str] = None,
     enable: bool = False,
     overwrite: bool = False,
+    persist: bool = False,
+    target_directory: Optional[str] = None,
     **_kwargs: Any,
 ) -> dict:
     try:
-        result = install_extension_package(package, repository, enable, overwrite)
+        result = install_extension_package(package, repository, enable, overwrite, persist, target_directory)
         return skill_success("Blender add-on package installed", **result)
     except Exception as exc:
-        return skill_exception(exc, message="Failed to install Blender add-on package")
+        return skill_exception(exc, message="Failed to install Blender add-on package", **getattr(exc, "context", {}))
 
 
 if __name__ == "__main__":
