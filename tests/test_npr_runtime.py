@@ -66,6 +66,7 @@ def test_dry_run_reports_exact_isolated_plan_without_starting_or_writing(tmp_pat
     assert output["ready"] is False
     assert output["launch_plan"]["executable"] == data["binary_path"]
     assert output["launch_plan"]["argv"][0] == data["binary_path"]
+    assert "--no-window-focus" in output["launch_plan"]["argv"]
     assert output["environment"]["NODEBPY_BLENDER_BINARY"] == data["binary_path"]
     assert output["environment"]["BLENDER_USER_CONFIG"].startswith(data["work_dir"])
     assert output["idle_interval_secs"] == 0.5
