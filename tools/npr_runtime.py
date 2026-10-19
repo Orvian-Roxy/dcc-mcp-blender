@@ -115,6 +115,7 @@ def launch_plan(config):
         version=config["target_npr"],
         argv=[
             config["binary_path"],
+            "--no-window-focus",
             "--factory-startup",
             "--disable-autoexec",
             "--python",
