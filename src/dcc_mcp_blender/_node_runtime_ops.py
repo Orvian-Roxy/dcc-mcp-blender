@@ -108,6 +108,8 @@ def _stored_node_data(name, value, strict):
         return [{"identifier": item.identifier, "is_collapsed": item.is_collapsed} for item in value]
     if name == "parent":
         return {"node": value.name}
+    if name == "paired_output" and getattr(value, "bl_idname", None) == "NodeClosureOutput":
+        return {"node": value.name, "bl_idname": value.bl_idname}
     if name == "color_ramp":
         if len(value.elements) > 256:
             raise ValueError("ColorRamp exceeds the 256-element revision bound")
@@ -136,7 +138,33 @@ def _stored_node_data(name, value, strict):
         if len(value.enum_items) > 256:
             raise ValueError("Node enum exceeds the 256-item revision bound")
         return [_primitive_data(item) for item in value.enum_items]
-    if name in {"index_switch_items", "repeat_items", "state_items", "capture_items", "bake_items", "menu_items"}:
+    if name in {"input_items", "output_items"}:
+        if len(value) > 256:
+            raise ValueError("Closure node items exceed the 256-item revision bound")
+        item_types = (
+            {"NodeClosureInputItem", "NodeEvaluateClosureInputItem"}
+            if name == "input_items"
+            else {"NodeClosureOutputItem", "NodeEvaluateClosureOutputItem"}
+        )
+        if all(getattr(getattr(item, "bl_rna", None), "identifier", None) in item_types for item in value):
+            return [
+                {"name": item.name, "socket_type": item.socket_type, "structure_type": item.structure_type}
+                for item in value
+            ]
+    if name == "active_item":
+        return {"name": value.name, "description": value.description}
+    if name == "define_values" and len(value) == 0:
+        # NPR GLSLFunction evidence qualifies the empty collection only.
+        return []
+    if name in {
+        "index_switch_items",
+        "repeat_items",
+        "state_items",
+        "capture_items",
+        "bake_items",
+        "menu_items",
+        "enum_items",
+    }:
         if len(value) > 256:
             raise ValueError("Dynamic node items exceed the 256-item revision bound")
         return [_primitive_data(item) for item in value]

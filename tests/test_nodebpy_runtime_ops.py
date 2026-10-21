@@ -1,6 +1,10 @@
+import json
+from pathlib import Path
 from unittest.mock import patch
+from urllib.request import Request, urlopen
 
 import pytest
+from dcc_mcp_core import HostExecutionBridge, McpHttpConfig, McpHttpServer, ToolRegistry
 
 from dcc_mcp_blender import _nodebpy_runtime_ops as ops
 
@@ -25,6 +29,53 @@ def test_nested_doctor_failure_is_not_transport_success():
         result = ops._project_call("nodebpy_cli", "doctor", {"blender": True})
         assert result["success"] is False
         assert result["context"]["project_elapsed_seconds"] >= 0
+
+
+@pytest.mark.parametrize("full", [False, True])
+def test_project_business_failure_reaches_mcp_error_without_losing_evidence(tmp_path, full):
+    script = Path(ops.__file__).parent / "skills/blender-nodebpy-runtime/scripts/project.py"
+    bridge = HostExecutionBridge()
+    registry = ToolRegistry()
+    action = "blender_nodebpy_runtime__project"
+    registry.register(action, input_schema=json.dumps({"type": "object", "properties": {}}))
+    config = McpHttpConfig(port=0)
+    config.gateway_port = 0
+    config.registry_dir = str(tmp_path / "registry")
+    server = McpHttpServer(registry, config)
+    server.register_handler(
+        action,
+        lambda params: bridge.execute_script(
+            str(script),
+            dict(
+                project_root=str(tmp_path), action="check", game="wuwa", profile="/profile", output="/output", full=full
+            ),
+            action_name=action,
+            skill_name="blender-nodebpy-runtime",
+        ),
+    )
+    handle = server.start()
+    try:
+        with patch.object(ops, "_check_checkout"), patch.object(
+            ops,
+            "run_entrypoint",
+            return_value={"success": True, "context": {"result": {"ok": False, "reason": "deliberate failure"}}},
+        ):
+            request = Request(
+                handle.mcp_url(),
+                data=json.dumps(
+                    {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": action, "arguments": {}}}
+                ).encode(),
+                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+            )
+            with urlopen(request, timeout=10) as response:
+                result = json.load(response)["result"]
+        assert result["isError"] is True
+        evidence = result["structuredContent"]
+        assert evidence["success"] is False
+        assert evidence["context"]["result"]["context"]["result"]["reason"] == "deliberate failure"
+    finally:
+        handle.shutdown()
+        bridge.clear_script_packages()
 
 
 def test_prepare_reports_transient_activation_and_actual_doctor(tmp_path):
@@ -258,3 +309,14 @@ def test_verify_report_discovery_failure_preserves_structural_result(tmp_path):
         assert result["success"] is True
         assert "PermissionError" in result["context"]["report_error"]
         assert result["context"]["result"]["details"]["scene"] == {"slots": 17}
+
+
+def test_prepare_reuses_registered_importer(tmp_path):
+    state = {"success": True, "context": {"enabled_runtime": True, "operators": {"mmd_tools.import_model": True}}}
+    with patch.object(ops, "attach_project", return_value={"success": True}), patch.object(
+        ops, "_check_checkout"
+    ), patch.object(ops, "get_addon_status", return_value=state), patch.object(
+        ops, "enable_addon"
+    ) as enable, patch.object(ops, "_project_call", return_value={"success": True}):
+        assert ops.prepare(str(tmp_path))["success"]
+    enable.assert_not_called()

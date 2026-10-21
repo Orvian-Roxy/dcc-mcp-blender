@@ -159,7 +159,11 @@ def prepare(project_root: str, extra_paths: list[str] | None = None, addon_modul
         before = get_addon_status(addon_module, operators=["mmd_tools.import_model"])
         if not before.get("success"):
             return before
-        enabled_result = enable_addon(addon_module, persist=False, operators=["mmd_tools.import_model"])
+        state = before.get("context", {})
+        if state.get("enabled_runtime") and state.get("operators", {}).get("mmd_tools.import_model"):
+            enabled_result = before
+        else:
+            enabled_result = enable_addon(addon_module, persist=False, operators=["mmd_tools.import_model"])
         if not enabled_result.get("success"):
             return enabled_result
         doctor = _project_call("nodebpy_cli", "doctor", {"blender": True})

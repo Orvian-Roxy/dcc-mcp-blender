@@ -4,54 +4,213 @@ tools:
     source_file: scripts/new_scene.py
     execution: sync
     affinity: main
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties: {}
     read_only: false
     destructive: true
     idempotent: false
+    annotations:
+      read_only_hint: false
+      destructive_hint: true
+      idempotent_hint: false
+      open_world_hint: false
   - name: save_scene
     description: "Save the current Blender scene"
     source_file: scripts/save_scene.py
     execution: sync
     affinity: main
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        filepath:
+          type: [string, "null"]
+          description: Destination path; omit or pass null to save the current file. Required for the first save.
     read_only: false
     destructive: false
     idempotent: true
+    annotations:
+      read_only_hint: false
+      destructive_hint: false
+      idempotent_hint: true
+      open_world_hint: true
   - name: open_scene
     description: "Open a Blender scene file (.blend) from disk"
     source_file: scripts/open_scene.py
     execution: sync
     affinity: main
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        filepath:
+          type: string
+          description: Absolute path to the .blend file to open.
+      required: [filepath]
     read_only: false
     destructive: true
     idempotent: false
+    annotations:
+      read_only_hint: false
+      destructive_hint: true
+      idempotent_hint: false
+      open_world_hint: true
   - name: list_objects
-    description: "List all objects in the current Blender scene"
+    description: "List a bounded page of Blender object datablocks, optionally filtered by type and literal name substring"
     source_file: scripts/list_objects.py
     execution: sync
     affinity: main
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        object_type:
+          type: [string, "null"]
+          description: Optional Blender object type filter, case insensitive (for example MESH or CAMERA).
+        name_filter:
+          type: string
+          default: ""
+          description: Case-sensitive literal name substring (not a regex).
+        offset:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Offset among matching objects; continue with the previous next_offset.
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+          description: Maximum objects returned per page. count and total retain the full matched count.
     read_only: true
     destructive: false
     idempotent: true
+    annotations:
+      read_only_hint: true
+      destructive_hint: false
+      idempotent_hint: true
+      open_world_hint: false
   - name: get_scene_info
     description: "Return a hierarchical description of the current scene"
     source_file: scripts/get_scene_info.py
     execution: sync
     affinity: main
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties: {}
     read_only: true
     destructive: false
     idempotent: true
+    annotations:
+      read_only_hint: true
+      destructive_hint: false
+      idempotent_hint: true
+      open_world_hint: false
   - name: get_session_info
-    description: "Return Blender version, scene path, and basic session statistics"
+    description: "Observe exact process PID, scene save state, dirty images, native jobs, playback, and session statistics"
     source_file: scripts/get_session_info.py
     execution: sync
     affinity: main
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties: {}
     read_only: true
     destructive: false
     idempotent: true
+    annotations:
+      read_only_hint: true
+      destructive_hint: false
+      idempotent_hint: true
+      open_world_hint: false
   - name: close_scene
     description: "Explicitly close Blender after saving scene and image edits"
     source_file: scripts/close_scene.py
     execution: sync
     affinity: main
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties: {}
     read_only: false
     destructive: true
     idempotent: false
+    annotations:
+      read_only_hint: false
+      destructive_hint: true
+      idempotent_hint: false
+      open_world_hint: false
+  - name: get_viewport_info
+    description: "Read existing GUI viewport shading and view transforms without changing the scene; headless returns no viewports"
+    source_file: scripts/get_viewport_info.py
+    execution: sync
+    affinity: main
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties: {}
+    read_only: true
+    destructive: false
+    idempotent: true
+    annotations:
+      read_only_hint: true
+      destructive_hint: false
+      idempotent_hint: true
+      open_world_hint: false
+  - name: set_viewport_view
+    description: "Set an existing GUI viewport's navigation and display without editing scene objects or materials"
+    source_file: scripts/set_viewport_view.py
+    execution: sync
+    affinity: main
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [area_index]
+      properties:
+        window_index:
+          type: integer
+          minimum: 0
+          default: 0
+        area_index:
+          type: integer
+          minimum: 0
+          description: Existing VIEW_3D area index returned by get_viewport_info.
+        axis:
+          type: string
+          enum: [FRONT, BACK, LEFT, RIGHT, TOP, BOTTOM]
+        view_location:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: {type: number}
+        view_rotation:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items: {type: number}
+          description: Quaternion in wxyz order; use axis or rotation, not both.
+        view_distance:
+          type: number
+          exclusiveMinimum: 0
+        view_perspective:
+          type: string
+          enum: [ORTHO, PERSP]
+        shading_type:
+          type: string
+          enum: [WIREFRAME, SOLID, MATERIAL, RENDERED]
+        use_compositor:
+          type: string
+          enum: [DISABLED, CAMERA, ALWAYS]
+        show_overlays:
+          type: boolean
+    read_only: false
+    destructive: false
+    idempotent: true
+    annotations:
+      read_only_hint: false
+      destructive_hint: false
+      idempotent_hint: true
+      open_world_hint: false

@@ -359,6 +359,203 @@ def test_empty_node_panel_states_does_not_block_native_patch(host):
     assert result["success"], result
 
 
+def test_empty_native_glsl_defines_are_supported_but_nonempty_remain_unqualified(host):
+    _, owner, ref = host
+    node = owner.node_tree.nodes[0]
+    node.define_values = []
+    node.bl_rna.properties = [NS(identifier="define_values", type="COLLECTION", is_readonly=True)]
+    before = runtime.query_nodes(ref)["context"]["revision"]
+    patch = [{"op": "set_input", "node": "B", "socket": "Value", "value": 0.8}]
+    assert runtime._stored_node_data("define_values", [], True) == []
+    assert runtime.patch_nodes(ref, before, patch, action="validate")["success"]
+    node.define_values.append(NS(name="UNQUALIFIED"))
+    inspected = runtime.query_nodes(ref)
+    assert inspected["success"]
+    refused = runtime.patch_nodes(ref, inspected["context"]["revision"], patch)
+    assert not refused["success"]
+    assert "define_values" in refused["context"]["detail"]
+    assert owner.node_tree.nodes[1].inputs[0].default_value == 0.5
+
+
+@pytest.mark.parametrize("change", ["name", "description", "active"])
+def test_native_menu_items_and_active_selection_are_revisioned(host, change):
+    _, owner, ref = host
+    node = owner.node_tree.nodes[0]
+    properties = [NS(identifier=key, type="STRING", is_readonly=False) for key in ("name", "description")]
+    node.enum_items = [
+        NS(name="First", description="First item", bl_rna=NS(properties=properties)),
+        NS(name="Second", description="Second item", bl_rna=NS(properties=properties)),
+    ]
+    node.active_item = node.enum_items[0]
+    node.bl_rna.properties = [
+        NS(identifier="enum_items", type="COLLECTION", is_readonly=True),
+        NS(identifier="active_item", type="POINTER", is_readonly=True),
+    ]
+    before = runtime.query_nodes(ref)["context"]["revision"]
+    patch = [{"op": "set_input", "node": "B", "socket": "Value", "value": 0.8}]
+    assert runtime.patch_nodes(ref, before, patch, action="validate")["success"]
+    if change == "active":
+        node.active_item = node.enum_items[1]
+    else:
+        setattr(node.enum_items[0], change, "Changed")
+    rejected = runtime.patch_nodes(ref, before, patch)
+    assert rejected["context"]["status"] == "stale_revision", rejected
+    assert owner.node_tree.nodes[1].inputs[0].default_value == 0.5
+
+
+def test_native_menu_items_keep_existing_revision_bound():
+    with pytest.raises(ValueError, match="256"):
+        runtime._stored_node_data("enum_items", [NS()] * 257, True)
+
+
+def closure_item(collection, name="Vector", socket_type="VECTOR", structure_type="AUTO", item_type=None):
+    return NS(
+        name=name,
+        socket_type=socket_type,
+        structure_type=structure_type,
+        color=[0.5, 0.5, 0.5, 1.0],
+        bl_rna=NS(
+            identifier=item_type or ("NodeClosureInputItem" if collection == "input_items" else "NodeClosureOutputItem")
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "collection,item_type",
+    [
+        ("input_items", "NodeClosureInputItem"),
+        ("output_items", "NodeClosureOutputItem"),
+        ("input_items", "NodeEvaluateClosureInputItem"),
+        ("output_items", "NodeEvaluateClosureOutputItem"),
+    ],
+)
+@pytest.mark.parametrize("field,value", [("name", "Changed"), ("socket_type", "RGBA"), ("structure_type", "FIELD")])
+def test_native_closure_item_fields_reject_stale_patches(host, collection, item_type, field, value):
+    _, owner, ref = host
+    node = owner.node_tree.nodes[0]
+    node.bl_idname = "NodeClosureOutput"
+    setattr(node, collection, [closure_item(collection, item_type=item_type)])
+    node.bl_rna.properties = [NS(identifier=collection, type="COLLECTION", is_readonly=True)]
+    before = runtime.query_nodes(ref)["context"]["revision"]
+    patch = [{"op": "set_input", "node": "B", "socket": "Value", "value": 0.8}]
+    assert runtime.patch_nodes(ref, before, patch, action="validate")["success"]
+    setattr(getattr(node, collection)[0], field, value)
+    rejected = runtime.patch_nodes(ref, before, patch)
+    assert rejected["context"]["status"] == "stale_revision", rejected
+    assert owner.node_tree.nodes[1].inputs[0].default_value == 0.5
+
+
+@pytest.mark.parametrize(
+    "collection,item_type",
+    [
+        ("input_items", "NodeClosureInputItem"),
+        ("output_items", "NodeClosureOutputItem"),
+        ("input_items", "NodeEvaluateClosureInputItem"),
+        ("output_items", "NodeEvaluateClosureOutputItem"),
+    ],
+)
+def test_native_closure_item_order_and_capacity_are_revisioned(host, collection, item_type):
+    _, owner, ref = host
+    node = owner.node_tree.nodes[0]
+    items = [
+        closure_item(collection, item_type=item_type),
+        closure_item(collection, name="Color", socket_type="RGBA", item_type=item_type),
+    ]
+    setattr(node, collection, items)
+    node.bl_rna.properties = [NS(identifier=collection, type="COLLECTION", is_readonly=True)]
+    before = runtime._revision(owner.node_tree, require_complete=True)
+    assert runtime._stored_node_data(collection, items[:1], True) == [
+        {"name": "Vector", "socket_type": "VECTOR", "structure_type": "AUTO"}
+    ]
+    items.reverse()
+    assert runtime._revision(owner.node_tree, require_complete=True) != before
+    items.pop()
+    assert runtime._revision(owner.node_tree, require_complete=True) != before
+    assert (
+        len(runtime._stored_node_data(collection, [closure_item(collection, item_type=item_type)] * 256, True)) == 256
+    )
+    with pytest.raises(ValueError, match="256"):
+        runtime._stored_node_data(collection, [closure_item(collection, item_type=item_type)] * 257, True)
+
+
+def test_unqualified_input_item_type_remains_inspectable_but_strict_revision_refuses():
+    item = closure_item("input_items")
+    item.bl_rna.identifier = "UnqualifiedInputItem"
+    assert runtime._stored_node_data("input_items", [item], False) == {"revision_unqualified": "input_items"}
+    with pytest.raises(ValueError, match="input_items"):
+        runtime._stored_node_data("input_items", [item], True)
+
+
+@pytest.mark.parametrize("change", ["switch", "missing", "establish", "output-edit"])
+def test_native_closure_pairing_is_a_local_revisioned_node_reference(host, change):
+    _, owner, ref = host
+    tree = owner.node_tree
+    input_node = tree.nodes[0]
+    input_node.bl_idname = "NodeClosureInput"
+    first, second = Node("Closure Output"), Node("Closure Output.001")
+    first.bl_idname = second.bl_idname = "NodeClosureOutput"
+    tree.nodes.extend([first, second])
+    input_node.paired_output = None if change == "establish" else first
+    input_node.bl_rna.properties = [NS(identifier="paired_output", type="POINTER", is_readonly=True)]
+    before = runtime.query_nodes(ref)["context"]["revision"]
+    patch = [{"op": "set_input", "node": "B", "socket": "Value", "value": 0.8}]
+    assert runtime.patch_nodes(ref, before, patch, action="validate")["success"]
+    assert runtime._stored_node_data("paired_output", first, True) == {
+        "node": "Closure Output",
+        "bl_idname": "NodeClosureOutput",
+    }
+    assert runtime._stored_node_data("paired_output", None, True) is None
+    if change == "switch":
+        input_node.paired_output = second
+    elif change == "missing":
+        input_node.paired_output = None
+    elif change == "establish":
+        input_node.paired_output = first
+    else:
+        first.label = "changed closure output"
+    rejected = runtime.patch_nodes(ref, before, patch)
+    assert rejected["context"]["status"] == "stale_revision", rejected
+    assert tree.nodes[1].inputs[0].default_value == 0.5
+
+
+def test_unknown_zone_pair_type_is_not_qualified_by_closure_support():
+    unknown = NS(name="Simulation Output", bl_idname="GeometryNodeSimulationOutput")
+    assert runtime._stored_node_data("paired_output", unknown, False) == {"revision_unqualified": "paired_output"}
+    with pytest.raises(ValueError, match="paired_output"):
+        runtime._stored_node_data("paired_output", unknown, True)
+
+
+def test_all_native_closure_storage_surfaces_qualify_in_one_tree(host):
+    _, owner, ref = host
+    input_node, output_node = owner.node_tree.nodes
+    input_node.bl_idname, output_node.bl_idname = "NodeClosureInput", "NodeClosureOutput"
+    evaluate = Node("Evaluate Closure")
+    evaluate.bl_idname = "NodeEvaluateClosure"
+    owner.node_tree.nodes.append(evaluate)
+    input_node.paired_output = output_node
+    input_node.bl_rna.properties = [NS(identifier="paired_output", type="POINTER", is_readonly=True)]
+    for node, prefix in ((output_node, "NodeClosure"), (evaluate, "NodeEvaluateClosure")):
+        node.input_items = [closure_item("input_items", item_type=prefix + "InputItem")]
+        node.output_items = [closure_item("output_items", item_type=prefix + "OutputItem")]
+        node.active_input_index = node.active_output_index = 0
+        node.define_signature = True
+        node.bl_rna.properties = [
+            NS(identifier="input_items", type="COLLECTION", is_readonly=True),
+            NS(identifier="output_items", type="COLLECTION", is_readonly=True),
+            NS(identifier="active_input_index", type="INT", is_readonly=False),
+            NS(identifier="active_output_index", type="INT", is_readonly=False),
+            NS(identifier="define_signature", type="BOOLEAN", is_readonly=False),
+        ]
+    before = runtime._revision(owner.node_tree, require_complete=True)
+    assert runtime.query_nodes(ref)["context"]["revision"] == before
+    validation = runtime.patch_nodes(
+        ref, before, [{"op": "set_input", "node": "B", "socket": "Value", "value": 0.8}], action="validate"
+    )
+    assert validation["success"], validation
+    output_node.define_signature = False
+    assert runtime._revision(owner.node_tree, require_complete=True) != before
+
+
 def test_native_node_panel_state_is_fingerprinted_with_readonly_identifier(host):
     _, owner, ref = host
     node = owner.node_tree.nodes[0]

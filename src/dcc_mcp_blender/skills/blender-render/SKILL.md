@@ -42,6 +42,11 @@ multi-layer EXR or display-ready PNG / JPEG / TIFF / BMP output so the
 interactive Blender process remains responsive; poll with `get_render_job` and
 cancel only through the returned job id.
 
+Use `capture_viewport(filepath, resolution_x, resolution_y)` for the current
+VIEW_3D image. It restores temporary render settings and writes the image file
+without adding a managed scene-write revision; existing unsaved edits remain
+pending.
+
 `start_render_job` accepts the output containers
 `OPEN_EXR_MULTILAYER`, `OPEN_EXR`, `PNG`, `JPEG`, `TIFF`, `BMP`. Omit
 `output_format` to reuse the scene's `render.image_settings.file_format`. A

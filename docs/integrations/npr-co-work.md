@@ -22,9 +22,28 @@ MMD Tools 的源码、打包、版本和安装更新统一由[插件维护会话
 
 ## 日常共作
 
+### 固定 MCP 接入
+
+本机 `blender` 连接使用 `http://127.0.0.1:9765/mcp`；用户级 LaunchAgent `local.dcc-mcp.gateway` 托管官方 server，仅监听回环地址，禁用 remote listener，空闲时继续运行。`~/Library/LaunchAgents/local.dcc-mcp.gateway.plist` 是本机部署配置。
+
+`tools/npr_mcp.py --config /absolute/npr.json` 提供 stdio 启动连接（依赖现有环境中的 MCP Python SDK 2.x）。Codex 注册名为 `blender_startup`，仅提供 `start_instance(task_name, project_root)` 与 `instance_status(task_name)`，委托既有 NPR 启动器；配置旁的 `instances/<task_name>` 保留官方启动记录，重复启动同名目录会拒绝。共享网关注册目录为配置目录上一级的 `gateway/registry`，必须与已部署网关一致。独立 CLI 原流程保留，默认仍使用私有网关。
+
+自动启动传入 `--no-window-focus`。2026-10-19，本机默认 DCC 配置已切换到带原生 Cocoa 焦点修复的 alpha.4 本地补丁版，完整应用保持签名和只读安装；身份、部署回执与配置回退位置见[原生补丁清单](/Users/chenrui/.codex/worktrees/npr-no-focus-20261019/blender-mmd-physics/npr/macos-no-window-focus.json)。启动 MCP 每次读取配置，无须重启；新默认作用于新建宿主，按项目复用的已有宿主保留原二进制。实际默认入口已通过新建窗口、保存重开、MMD Tools 准备和正常关闭检查，2,071 次前台 PID 采样未观察到该测试实例置前。
+
+NPR 配置的 `addons` 列表指定已安装的模块和必需 Operator，例如 `{"module":"mmd_tools","operators":["mmd_tools.import_model","mmd_tools.build_rig"]}`；模块路径由 `python_paths` 提供。启动器复用 DCC 插件启用接口，在实例私有配置中保存偏好，不改日常 Blender 配置。插件准备失败仍保留 DCC 连接及逐项错误，返回 `ready:false`。`environment_ready` 和 `addons` 是启动准备回执；原位修复后的当前插件状态通过 DCC 插件查询确认。NodeBPY prepare 复用已注册的导入器。
+
+`--factory-startup` 不继承日常 Blender 的导航偏好。显式 `navigation_preferences` 配置可指定 `use_mouse_depth_navigate`、`use_zoom_to_mouse`、`use_rotate_around_active` 三个布尔值；启动器只在初始化时通过现有 Blender 偏好接口应用并保存到实例私有配置，回执返回实际值。缺省不修改这些偏好，角色构建、模板加载与审阅保留用户导航偏好。本机用户指定默认为前两项开启、最后一项关闭；日常 Blender 5.2 的用户偏好也已核对保存。23 项启动相关测试、原生工厂启动应用及下一进程读取验证通过，记录位于 `/Users/chenrui/.local/share/dcc-mcp-blender/production-20261017/navigation-defaults-a64bebec/`。未改现有其他任务的窗口。
+
+插件启动修复验收：35 项相关测试和 Ruff 通过。真实新实例自动启用 MMD Tools，偏好、导入/构建 Operator、`Object.mmd_root` 和 UI 面板注册通过；打开现有 300 帧 MMD 工程后再次通过，另存测试副本并正常关闭。缺失插件的独立失败实例返回 `ready:false` 和具体错误，DCC 查询及关闭仍可用。原始回执分别保存在 `/tmp/dcc-addon-e2e`、`/tmp/dcc-addon-failure`。
+
+正常任务先通过启动 MCP 取得实例身份，再由官方 DCC MCP 完成发现、编辑、保存和关闭。不要为每轮创建临时终端宿主。连接配置变更后重载 MCP；连接不可用时先恢复服务，不能将临时 CLI 验证当作正式接入完成。此接入不改变 Codex 沙箱策略，不导入旧 Runtime 的票据或场景状态管理。
+
+2026-10-18 验收：14 项启动相关测试通过，真实 stdio MCP 启动后，独立 HTTP MCP 客户端经官方网关完成修改、保存、重开数值验证和关闭。回执及测试脚本位于 `/tmp/dcc-startup-e2e`；随后本地 Codex 会话直接通过 MCP 完成启动、对象改名、保存、重开核对及安全关闭，全程无额外审批，关闭后官方实例列表为空。追加状态查询发现 `instance:null` 处理错误，已用回归测试修复；Codex 重启后，本地验收会话通过原生 `instance_status` 返回 `ready:false`、`instance:null`，无异常或审批，随后恢复角色验收。网关登录恢复由 LaunchAgent 配置，未以重启整机验证。
+
+
 Agent 在选定实例工作，人可以查看、修改或中断。通常依次完成这些动作。
 
-需要新实例时，使用 [NPR 启动入口](../../tools/npr_runtime.py)，复用官方 CLI 的 gateway 与 `start-instance`：
+日常新实例使用上面的启动 MCP。仅在独立 CLI 验证或诊断时，使用 [NPR 启动入口](../../tools/npr_runtime.py)，复用官方 CLI 的 gateway 与 `start-instance`：
 
 ```bash
 python tools/npr_runtime.py start --config /absolute/npr.json --dry-run
@@ -73,9 +92,23 @@ managed pending 记录工具可能产生但 Blender dirty 标志尚未反映的�
 
 `read_only` 元数据必须符合工具行为。真实只读工具不会产生 managed pending，局部查询也就不会无故阻挡后续文件操作。不能为了减少保存而把写工具标成只读。
 
-NodeBPY `verify` 的重建验证可能临时切换并恢复材质绑定，因此仍按可能写入处理。结构检查通过时，保存状态也可能为未知；需要确认落盘时，显式保存后读取 session 状态即可。
+已有审阅场景仅需局部取景时，先用 `get_viewport_info` 取得 window/area 标识，再以 `set_viewport_view` 一次设置轴向、距离和观察中心。冷启动还可在同一次调用设置视口着色模式、合成器和叠加显示。它仅修改视口 UI，不重复隐藏对象或修改材质、灯光，不增加或清除场景 pending。完整角色审阅准备仍由 NodeBPY 负责；用户要求将新视图写入工程时正常保存。
+
+typed open 现在记录加载前后稳定的文件观测，干净且未再修改时可返回 `save_status: saved, state_source: open`，不伪造 `last_save`。路径、文件 stamp、修改 revision 或脏图像变化会使该观测失效，后续未知/失败保存也不会回退到它。不再因刚重开后的状态未知而补存同一工程；真实修改与默认备份策略保持。
+
+NodeBPY `verify` 对已审计的 `wuwa` / `WutheringWaves` 和 `hsr` / `HonkaiStarRail` 入口按只读观察处理，不新增 managed pending。WuWa 已有源码审计与真实对照，确认场景 dirty、图像、网格及节点输入和绑定保持一致；HSR 当前 `validate` 及所调用的材质／pass 验证均为读取和断言，已完成源码审计、模拟回归和下述真实后台合成管理边界检查，未宣称完整 HSR 角色验证。它们不清除已有 pending，也不绕过已有场景或图像 dirty 保护。Genshin reconstruction 验证会临时切换并恢复材质及 Outline 绑定；ZZZ 验证会 reload 引用图像，均保留可能写入分类。结构检查通过与保存确认分别报告；需要确认落盘时，显式保存后读取 session 状态。
 
 保存返回 `pending` 或 `unknown`、调用超时或连接中断后，先观察现场。未知写入不自动重试。通用 Python 里的保存仍可能返回保守状态，应由明确文件入口确认。
+
+`save_unconfirmed` 后的下一步是只读 `blender_scene__get_session_info`，不是 `open_scene`：只有 `file_state` 确认 saved、场景和图像 clean、managed pending 已清除时才继续重开或关闭。仍未知时保留现场，按回执诊断；不要盲目重复保存。失败的 open 也是潜在写调用，会推进 managed revision，使之前延迟保存回执不能再直接确认，因此不要用 open 探测是否已保存。
+
+固定观察优先复用 `blender_material_library__list_images` 和 `blender_material_library__image_file_status`（参数 `image_name`）检查图像登记与单张文件状态；这不是全量依赖闭包证明，序列、UDIM 和链接库依赖须按对应工具与业务验证补充。视口用 `blender_scene__get_viewport_info`（空参数），返回所有打开窗口的活动 VIEW_3D 区域、shading、透视类型、位置、旋转与距离；无 GUI 返回空列表。它不切换区域、不更新依赖图、不加载像素、不保存，也不宣称画面或几何验收通过。两类固定观察不需要通用 Python，因此不会新增 managed pending；既有 dirty/pending 不会被它们清除。
+
+`blender_scene__get_session_info` 一次返回当前进程的精确 `pid`、场景与 `file_state.dirty_images`、原生 `jobs` 和各窗口是否播放的 `animation_playing`。原生作业固定观察 `RENDER`、`RENDER_PREVIEW`、`OBJECT_BAKE`、`COMPOSITE`、`SHADER_COMPILATION`，不支持的项返回 null 和 `job_errors`，不伪报为空闲；它不查询 Fleet。此入口保持只读，不使用通用 Python 做进程或作业探测，也不以这些状态单独证明可以关闭窗口。
+
+2026-10-20，[后台合成脚本](../../tests/native_session_observation.py)通过指定 alpha.4 Cocoa 修复版（Blender 5.2.0 LTS、build `4b0f35d53dec`）运行，隔离用户配置且不启动 GUI。PID 13173 的三种状态为 clean、只读 Python 查询造成的既有 managed pending、脏图像；session 查询及 `hsr` / `HonkaiStarRail` 入口均保留 revision、文件观测及像素，后两者仍被替换保护拒绝。5 类原生 jobs 在这次空闲进程中均返回 false，playback 为 false；未测试活跃作业或 GUI 播放。HSR 的业务验证及 checkout gate 使用明确 fixture 替身，其余 project、文件状态和 bridge 路径为真实实现；未读取真实角色或资产。启动参数、日志和完整回执保留在 `/var/folders/kg/ptj3dszn3z94sz48jcqvlvd00000gn/T/dcc-native-session-20261020-z9g6hges/`，运行耗时 4.054 秒，退出码 0。这是边界验收，不是构建耗时测量或部署验收。
+
+失败传播按业务回执判断：NodeBPY 入口未返回 `ok:true` 时，adapter 返回 `success:false` 并保留原结果。Core 0.20.45 的本地 HTTP MCP 回归已确认，该结果同时成为 `structuredContent.success:false` 和外层 `isError:true`；`full` 两种取值均保留失败证据。依赖动作只有在业务成功时继续，HTTP 200 或 CLI 正常退出不能单独证明前一步成功。此检查无需真实 Blender，不代表已部署版本完成验收。
 
 ## 本机验收边界
 
@@ -108,3 +141,11 @@ NodeBPY `verify` 的重建验证可能临时切换并恢复材质绑定，因此
 生产侧 530 个 Profile 文件和 NPR 注册哈希保持不变。本任务未写生产 MCP 配置；早先配置哈希一致，末次冷启动时观察到全局启动程序已指向 alpha.4，未回滚该变化。run05 使用进程内明确的 alpha.3 路径完成隔离验证。
 
 run03、run04 均保存后明确关闭；run05 保留为历史验收现场，最新 alpha.4 实例见其原生回执目录的 `ready.json`。run01 的启动错误窗口保留供诊断，未自动清理。节点提交失败和不完整回退分支由模拟回归验证，不冒称原生回退已验证。
+
+## 本会话增量的 Git 保全（2026-10-21）
+
+本次在 `codex/workflow-feedback-closeout-20261021` 独立分支中，以 `ddf3980` 为基线保存本会话的 38 个增量文件，涵盖批量材质反馈、Closure 节点 revision、固定视口观察与导航、保存状态观察、NPR 启动和插件准备。原工作区和已有实例保持不变。
+
+该基线包含尚未进入官方主线的 Node/RNA runtime、managed file、NodeBPY 共作和 NPR 启动基础。增量提交依赖这些既有实现，不是可直接应用于当前 `main` 的独立补丁。基线中的插件源码归属、打包和 CI 迁移另属原迁移任务，不随本次保全合并。
+
+隔离源码导入路径已核对，14 份相关测试文件共 334 项通过，29 份变更 Python 文件的 Ruff、Skill lint 和差异格式检查通过。本次仅保存 Git 增量并运行针对性宿主检查，沿用上文已有原生证据；没有启动 Blender、重新验收运行环境或切换部署。

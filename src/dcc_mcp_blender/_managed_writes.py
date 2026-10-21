@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 from contextvars import ContextVar
 from functools import wraps
@@ -53,11 +54,18 @@ def install_write_guard(bridge, get_skill) -> None:
                 return func(*call_args, **call_kwargs)
             tool_name = context.action_name.rsplit("__", 1)[-1]
             params = args[1] if len(args) > 1 and isinstance(args[1], dict) else kwargs
-            if (context.skill_name, tool_name) == ("blender-nodebpy-runtime", "project") and params.get(
-                "action"
-            ) == "check":
-                # Audited host/input preflight; verify still temporarily mutates bindings.
-                return func(*call_args, **call_kwargs)
+            if (context.skill_name, tool_name) == ("blender-nodebpy-runtime", "project"):
+                # Older GI checkouts still switch bindings/reload images. The claim
+                # belongs to the loaded execute function and cannot survive its replacement.
+                execute = getattr(sys.modules.get("nodebpy_build"), "execute", None)
+                observational_gi = params.get("game") in ("genshin", "Genshin") and "Genshin" in getattr(
+                    execute, "read_only_verify_games", ()
+                )
+                if params.get("action") == "check" or (
+                    params.get("action") == "verify"
+                    and (observational_gi or params.get("game") in ("wuwa", "WutheringWaves", "hsr", "HonkaiStarRail"))
+                ):
+                    return func(*call_args, **call_kwargs)
             try:
                 skill = get_skill(context.skill_name) if context.skill_name else None
                 tools = getattr(skill, "tools", ()) if skill is not None else ()
@@ -68,8 +76,35 @@ def install_write_guard(bridge, get_skill) -> None:
             except Exception:
                 # Missing discovery metadata cannot make a possible write read-only.
                 declared = None
-            if declared is not None and declared.read_only:
+            # Capture restores its render settings; navigation/display only change viewport UI.
+            # Neither creates a scene edit, and neither clears preexisting writes.
+            if declared is not None and (
+                declared.read_only
+                or (context.skill_name, tool_name)
+                in {
+                    ("blender-render", "capture_viewport"),
+                    ("blender-scene", "set_viewport_view"),
+                }
+            ):
                 return func(*call_args, **call_kwargs)
+            if declared is not None and (context.skill_name, tool_name) == ("blender-node-runtime", "preview_variants"):
+                # Protect transient edits while running; only a complete restoration
+                # receipt avoids adding a lasting write. Nested writes keep their revisions.
+                generic_token = _generic_write_active.set(True)
+                restored = False
+                try:
+                    result = func(*call_args, **call_kwargs)
+                    receipt = result.get("context") if isinstance(result, dict) else None
+                    restored = (
+                        isinstance(receipt, dict)
+                        and receipt.get("restored") is True
+                        and receipt.get("mutated") is False
+                    )
+                    return result
+                finally:
+                    if not restored:
+                        _write_revision += 1
+                    _generic_write_active.reset(generic_token)
             # ponytail: process-only tools are conservatively writes; refine metadata after measured save overhead.
             prior = _write_revision
             _write_revision += 1

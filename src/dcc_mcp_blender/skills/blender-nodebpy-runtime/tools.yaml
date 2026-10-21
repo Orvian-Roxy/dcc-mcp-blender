@@ -38,7 +38,7 @@ tools:
     idempotent_hint: true
     open_world_hint: true
 - name: project
-  description: Check inputs, build a fresh candidate or verify current NodeBPY edits.
+  description: Check inputs, build a fresh candidate or verify current NodeBPY edits. WuWa/HSR verify observes only; Genshin/ZZZ verify may write.
   source_file: scripts/project.py
   execution: sync
   affinity: main

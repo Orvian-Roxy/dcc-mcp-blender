@@ -3,6 +3,8 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from tests.test_skills_rna import Properties, property_info
 
 
@@ -83,6 +85,63 @@ def test_property_group_search_quality_and_validated_write_readback():
         assert set_property({"type": "scene"}, "wiggle.iterations", 99)["success"] is False
         assert get_properties({"type": "scene"}, path="wiggle.__class__")["success"] is False
         assert get_properties({"type": "scene"}, path="wiggle.iterations()")["success"] is False
+
+
+@pytest.mark.parametrize("colorspace", ["sRGB", "Non-Color"])
+def test_dynamic_enum_current_value_reads_without_static_write_membership(colorspace):
+    from dcc_mcp_blender._rna_runtime_ops import get_properties
+
+    prop = property_info("name", "ENUM", enum_items_static=[SimpleNamespace(identifier="NONE")])
+    settings = SimpleNamespace(bl_rna=SimpleNamespace(properties=Properties([prop])), name=colorspace)
+    bpy = host()
+    bpy.context.scene = SimpleNamespace(
+        bl_rna=SimpleNamespace(properties=Properties([property_info("colorspace_settings", "POINTER")])),
+        colorspace_settings=settings,
+    )
+    with patch.dict("sys.modules", {"bpy": bpy}):
+        scalar = get_properties({"type": "scene"}, path="colorspace_settings.name")
+        assert scalar["success"] and scalar["context"]["value"] == colorspace, scalar
+        page = get_properties({"type": "scene"}, path="colorspace_settings")
+        row = page["context"]["properties"][0]
+        assert row["value_status"] == "available" and row["value"] == colorspace
+
+
+def test_enum_write_keeps_static_membership_guard():
+    from dcc_mcp_blender._rna_runtime_ops import set_property
+
+    prop = property_info("name", "ENUM", enum_items_static=[SimpleNamespace(identifier="NONE")])
+    bpy = host()
+    bpy.context.scene = SimpleNamespace(bl_rna=SimpleNamespace(properties=Properties([prop])), name="sRGB")
+    with patch.dict("sys.modules", {"bpy": bpy}):
+        for value in ("UNKNOWN", "sRGB", "Non-Color"):
+            result = set_property({"type": "scene"}, "name", value)
+            assert not result["success"]
+            assert bpy.context.scene.name == "sRGB"
+        assert set_property({"type": "scene"}, "name", "NONE")["context"]["value"] == "NONE"
+
+
+def test_enum_read_keeps_complex_flag_and_value_bounds():
+    from dcc_mcp_blender._rna_runtime_ops import _read_value
+
+    flags = property_info(
+        "flags",
+        "ENUM",
+        is_enum_flag=True,
+        enum_items_static=[SimpleNamespace(identifier="A"), SimpleNamespace(identifier="B")],
+    )
+    assert _read_value({"B", "A"}, flags) == ["A", "B"]
+    invalid = [
+        ({"UNKNOWN"}, flags),
+        (set(str(index) for index in range(33)), flags),
+        (object(), property_info("image", "POINTER")),
+        (123, property_info("name", "ENUM")),
+        ("x" * 4097, property_info("name", "ENUM")),
+        ("é" * 4096, property_info("name", "ENUM")),
+        (["A"] * 33, property_info("names", "ENUM", is_array=True, array_length=33)),
+    ]
+    for value, prop in invalid:
+        with pytest.raises(ValueError):
+            _read_value(value, prop)
 
 
 def test_operator_reports_modal_poll_and_missing_context_without_retries():

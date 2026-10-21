@@ -132,6 +132,7 @@ def test_host_bootstrap_uses_exact_runtime_and_registers_native_lifecycle_bindin
     wheel.write_bytes(b"test import path")
     data["python_paths"] = [str(wheel)]
     data["idle_interval_secs"] = 0.05
+    data["navigation_preferences"] = {"use_mouse_depth_navigate": True, "use_zoom_to_mouse": True}
     config.write_text(json.dumps(data))
     calls = []
     server = SimpleNamespace(
@@ -145,12 +146,16 @@ def test_host_bootstrap_uses_exact_runtime_and_registers_native_lifecycle_bindin
         start_server=lambda **kwargs: calls.append(("start", kwargs)) or server,
     )
     bpy = SimpleNamespace(
+        context=SimpleNamespace(preferences=SimpleNamespace(inputs=SimpleNamespace())),
+        ops=SimpleNamespace(
+            wm=SimpleNamespace(save_userpref=lambda: calls.append(("save_preferences", {})) or {"FINISHED"})
+        ),
         app=SimpleNamespace(
             binary_path=data["binary_path"],
             build_hash=data["expected_build"][:12].encode(),
             background=False,
             version_string="5.2.0 LTS",
-        )
+        ),
     )
     monkeypatch.setenv("DCC_MCP_START_OPERATION_ID", "official-operation")
     monkeypatch.setenv("DCC_MCP_START_PROJECT", data["project_root"])
@@ -160,6 +165,7 @@ def test_host_bootstrap_uses_exact_runtime_and_registers_native_lifecycle_bindin
             "bpy": bpy,
             "dcc_mcp_blender": adapter,
             "dcc_mcp_blender.host": SimpleNamespace(BlenderUiDispatcher=lambda **kwargs: kwargs),
+            "dcc_mcp_blender._dev_ops": SimpleNamespace(enable_addon=lambda *_args, **_kwargs: None),
             "dcc_mcp_core": SimpleNamespace(__version__="0.20.45", _core=SimpleNamespace(__version__="0.20.45")),
         },
     ), patch.object(sys, "path", sys.path.copy()), patch.object(sys, "stdout"), patch.object(sys, "stderr"), patch(
@@ -168,6 +174,8 @@ def test_host_bootstrap_uses_exact_runtime_and_registers_native_lifecycle_bindin
         assert launcher().main(["bootstrap", "--config", str(config)]) == 0
         assert str(wheel) in sys.path
     host = json.loads(Path(data["work_dir"], "host.json").read_text())
+    assert host["navigation_preferences"] == data["navigation_preferences"]
+    assert calls[0] == ("save_preferences", {})
     assert host["instance_id"] == "host-instance"
     assert host["binary_path"] == data["binary_path"]
     assert host["core"] == "0.20.45"
@@ -197,6 +205,17 @@ def test_status_observes_exact_previous_instance_without_starting(tmp_path, caps
     assert command[command.index("--instance-id") + 1] == "observed-id"
     assert "start-instance" not in command and "ensure" not in command
     assert json.loads(capsys.readouterr().out)["instance_id"] == "observed-id"
+
+
+def test_status_before_first_launch_is_empty_and_does_not_create_or_start(tmp_path):
+    work = tmp_path / "not-launched"
+    with patch("subprocess.run") as process:
+        result = launcher().status(work)
+    assert result["ready"] is False
+    assert result["instance"] is None
+    assert result["work_dir"] == str(work)
+    process.assert_not_called()
+    assert not work.exists()
 
 
 def test_fixed_core_metadata_method_is_on_live_handle_not_inner_server():
