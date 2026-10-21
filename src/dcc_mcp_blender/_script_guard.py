@@ -56,3 +56,16 @@ def guard_arbitrary_execution(tool_name: str) -> Optional[dict]:
         ],
         disabled_by=list(opt_outs),
     )
+
+
+def guard_main_thread(tool_name: str) -> Optional[dict]:
+    """Reject file lifecycle calls outside Blender's main thread."""
+    import threading
+
+    if threading.current_thread() is threading.main_thread():
+        return None
+    return skill_error(
+        f"{tool_name} requires Blender's main thread",
+        "main_thread_required",
+        prompt="Call this operation through a main-affinity DCC tool.",
+    )

@@ -9,10 +9,13 @@ Provides:
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_ROOT = REPO_ROOT / "src"
@@ -151,7 +154,7 @@ def make_mock_bpy(
             if isinstance(v, list):
                 # Replace the MagicMock with a list-like mock that has get/new/remove
                 list_mock = MagicMock()
-                list_mock.__iter__ = MagicMock(return_value=iter(v))
+                list_mock.__iter__ = MagicMock(side_effect=lambda _v=v: iter(_v))
                 list_mock.__len__ = MagicMock(return_value=len(v))
                 list_mock.__contains__ = MagicMock(
                     side_effect=lambda x, _v=v: any(getattr(o, "name", None) == x or o == x for o in _v)
@@ -164,12 +167,20 @@ def make_mock_bpy(
     mock_bpy.ops.mesh = MagicMock()
     mock_bpy.ops.object = MagicMock()
     mock_bpy.ops.wm = MagicMock()
+    mock_bpy.ops.wm.read_factory_settings.return_value = {"FINISHED"}
     mock_bpy.ops.render = MagicMock()
     mock_bpy.ops.screen = MagicMock()
     mock_bpy.ops.rigidbody = MagicMock()
     if ops_attrs:
         for k, v in ops_attrs.items():
             setattr(mock_bpy.ops, k, v)
+
+    def abspath(value, **kwargs):
+        if value.startswith("//"):
+            return os.path.abspath(os.path.join(os.path.dirname(mock_bpy.data.filepath), value[2:]))
+        return os.path.abspath(value)
+
+    mock_bpy.path.abspath.side_effect = abspath
 
     return mock_bpy
 
@@ -208,3 +219,19 @@ def load_and_call(
         spec.loader.exec_module(mod)
         fn = getattr(mod, func_name)
         return fn(**kwargs)
+
+
+# Every test creates an independent fake host, while production has one process.
+@pytest.fixture(autouse=True)
+def isolated_managed_write_state(monkeypatch):
+    from dcc_mcp_blender import _managed_writes, _scene_files
+
+    monkeypatch.setattr(_scene_files, "_LAST_SAVE", {})
+    monkeypatch.setattr(_scene_files, "_LAST_OPEN", {})
+    monkeypatch.setattr(_managed_writes, "_write_revision", 0)
+    monkeypatch.setattr(_managed_writes, "_saved_revision", 0)
+    token = _managed_writes._call_prior_revision.set(None)
+    generic_token = _managed_writes._generic_write_active.set(False)
+    yield
+    _managed_writes._generic_write_active.reset(generic_token)
+    _managed_writes._call_prior_revision.reset(token)

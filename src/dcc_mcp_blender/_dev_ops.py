@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import importlib
+import importlib.machinery
 import importlib.metadata
 import io
 import platform
+import re
 import runpy
 import shutil
 import sys
+import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
@@ -317,123 +320,188 @@ def _refresh_addon_modules() -> List[Any]:
     return list(addon_utils.modules(refresh=True))
 
 
-def _addon_status_data(addon_module: str) -> Dict[str, Any]:
+def _validate_addon_module(addon_module: str, mutate: bool = False) -> None:
+    # Legacy file/package names can contain hyphens; addon_utils imports them by string.
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+", addon_module):
+        raise ValueError("addon_module must be a legacy module name or dotted Python module identity")
+    if mutate and addon_module.rsplit(".", 1)[-1] in {"dcc_mcp_blender", "bpy", "addon_utils"}:
+        raise ValueError("The control add-on and Blender infrastructure cannot manage themselves")
+    if mutate and threading.current_thread() is not threading.main_thread():
+        raise RuntimeError("Add-on changes must run on Blender's main thread")
+
+
+def _addon_status_data(addon_module: str, operators: Optional[List[str]] = None) -> Dict[str, Any]:
     import addon_utils
 
-    loaded, enabled = addon_utils.check(addon_module)
+    _validate_addon_module(addon_module)
+    enabled_default, enabled_runtime = addon_utils.check(addon_module)
     module = next(
         (candidate for candidate in _addon_modules() if getattr(candidate, "__name__", None) == addon_module), None
     )
     info = _addon_bl_info(module) if module is not None else {}
+    loaded = sys.modules.get(addon_module)
+    origin = getattr(loaded, "__file__", None) or getattr(module, "__file__", None)
+    discoverable = loaded is not None or bool(origin and Path(origin).exists())
+    discovery_error = None
+    try:
+        # PathFinder avoids importing parents while inspecting an Extension's dotted identity.
+        paths = None
+        for index, part in enumerate(addon_module.split(".")):
+            name = ".".join(addon_module.split(".")[: index + 1])
+            parent = sys.modules.get(name)
+            parent_paths = getattr(parent, "__path__", None)
+            if parent_paths is not None:
+                paths = parent_paths
+                if index == len(addon_module.split(".")) - 1:
+                    discoverable = True
+                continue
+            spec = getattr(parent, "__spec__", None) or importlib.machinery.PathFinder.find_spec(name, paths)
+            if spec is None:
+                break
+            discoverable = index == len(addon_module.split(".")) - 1 or discoverable
+            if index == len(addon_module.split(".")) - 1:
+                origin = origin or spec.origin
+            paths = spec.submodule_search_locations
+            if paths is None:
+                break
+    except Exception as exc:
+        discovery_error = str(exc)
+    operator_states = {}
+    if operators:
+        if len(operators) > 32:
+            raise ValueError("Inspect at most 32 operators")
+        import bpy
+
+        for operator in operators:
+            if not re.fullmatch(r"[A-Za-z_]\w*\.[A-Za-z_]\w*", operator):
+                raise ValueError("Operator identity must be category.name")
+            category, name = operator.split(".")
+            try:
+                getattr(getattr(bpy.ops, category), name).get_rna_type()
+                operator_states[operator] = True
+            except (AttributeError, KeyError, RuntimeError):
+                operator_states[operator] = False
     return {
         "addon_module": addon_module,
+        # installed is retained as the legacy catalog-membership alias, not a disk-absence claim.
         "installed": module is not None,
-        "loaded": bool(loaded),
-        "enabled": bool(enabled),
+        "catalog_member": module is not None,
+        "discoverable": discoverable,
+        "loaded": loaded is not None,
+        "enabled_default": bool(enabled_default),
+        "enabled_runtime": bool(enabled_runtime),
+        "enabled": bool(enabled_runtime),
         "name": info.get("name") or addon_module,
         "version": info.get("version"),
         "category": info.get("category"),
         "description": info.get("description"),
-        "file": getattr(module, "__file__", None) if module is not None else None,
+        "file": origin,
+        "on_disk": bool(origin and Path(origin).exists()),
+        "discovery_error": discovery_error,
+        "operators": operator_states,
     }
 
 
-def list_addons(filter: Optional[str] = None) -> dict:
-    """List available Blender add-ons with enabled/loaded state."""
+def list_addons(filter: Optional[str] = None, limit: int = 100, offset: int = 0) -> dict:
+    """List bounded catalog entries; absent entries may still be Python-discoverable."""
     try:
+        if not 1 <= limit <= 500 or offset < 0:
+            raise ValueError("limit must be 1..500 and offset must be non-negative")
         query = (filter or "").lower()
-        addons = []
+        names = []
         for module in _addon_modules():
             module_name = getattr(module, "__name__", "")
             info = _addon_bl_info(module)
-            display_name = str(info.get("name") or module_name)
-            if query and query not in module_name.lower() and query not in display_name.lower():
-                continue
-            addons.append(_addon_status_data(module_name))
-
+            if not query or query in module_name.lower() or query in str(info.get("name", "")).lower():
+                names.append(module_name)
+        names.sort()
+        addons = [_addon_status_data(name) for name in names[offset : offset + limit]]
         return skill_success(
             f"Found {len(addons)} add-ons",
             count=len(addons),
+            total=len(names),
             addons=addons,
             filter=filter,
+            offset=offset,
+            limit=limit,
         )
-    except ImportError:
-        return skill_error("Blender add-on utilities unavailable", "addon_utils could not be imported")
     except Exception as exc:
         return skill_exception(exc, message="Failed to list add-ons")
 
 
-def get_addon_status(addon_module: str) -> dict:
-    """Return structured status for a Blender add-on module."""
+def get_addon_status(addon_module: str, operators: Optional[List[str]] = None) -> dict:
+    """Inspect catalog, discovery, loaded state, preferences and optional Operators separately."""
     try:
-        status = _addon_status_data(addon_module)
         return skill_success(
-            f"Add-on status retrieved for {addon_module}",
-            **status,
+            f"Add-on status retrieved for {addon_module}", **_addon_status_data(addon_module, operators)
         )
-    except ImportError:
-        return skill_error("Blender add-on utilities unavailable", "addon_utils could not be imported")
     except Exception as exc:
         return skill_exception(exc, message=f"Failed to get add-on status for {addon_module}")
 
 
-def enable_addon(addon_module: str) -> dict:
-    """Enable a Blender add-on and report before/after state."""
+def _set_addon_enabled(
+    addon_module: str,
+    enabled: bool,
+    persist: bool = False,
+    operators: Optional[List[str]] = None,
+) -> dict:
+    """Change registration in this host; preferences are written only on explicit request."""
     try:
+        _validate_addon_module(addon_module, mutate=True)
+        import addon_utils
         import bpy
 
-        before = _addon_status_data(addon_module)
-        try:
-            bpy.ops.preferences.addon_enable(module=addon_module)
-        except Exception as exc:
-            if not before.get("enabled"):
-                try:
-                    bpy.ops.preferences.addon_disable(module=addon_module)
-                except Exception:
-                    pass
-            after = _addon_status_data(addon_module)
-            return skill_exception(exc, message=f"Failed to enable add-on {addon_module}", before=before, after=after)
+        before = _addon_status_data(addon_module, operators)
+        errors = []
 
-        after = _addon_status_data(addon_module)
-        if not after.get("enabled"):
-            return skill_error(
-                f"Add-on was not enabled: {addon_module}",
-                "Blender completed the enable operation but the add-on is still disabled.",
-                before=before,
-                after=after,
+        def handle_error(exc):
+            errors.append(str(exc))
+
+        if enabled:
+            module = addon_utils.enable(
+                addon_module, default_set=persist, persistent=persist, handle_error=handle_error
             )
-        return skill_success(f"Enabled add-on {addon_module}", before=before, after=after)
-    except ImportError:
-        return skill_error("Blender not available", "bpy or addon_utils could not be imported")
-    except Exception as exc:
-        return skill_exception(exc, message=f"Failed to enable add-on {addon_module}")
-
-
-def disable_addon(addon_module: str) -> dict:
-    """Disable a Blender add-on and report before/after state."""
-    try:
-        import bpy
-
-        before = _addon_status_data(addon_module)
-        try:
-            bpy.ops.preferences.addon_disable(module=addon_module)
-        except Exception as exc:
-            after = _addon_status_data(addon_module)
-            return skill_exception(exc, message=f"Failed to disable add-on {addon_module}", before=before, after=after)
-
-        after = _addon_status_data(addon_module)
-        if after.get("enabled"):
+            if module is None:
+                errors.append("Add-on registration returned no module")
+        else:
+            addon_utils.disable(addon_module, default_set=persist, handle_error=handle_error)
+        after = _addon_status_data(addon_module, operators)
+        context = dict(before=before, after=after, persistence_requested=persist, preferences_saved=False)
+        if errors or after["enabled_runtime"] != enabled or (persist and after["enabled_default"] != enabled):
+            return skill_error("Add-on registration did not reach the requested state", "; ".join(errors), **context)
+        if persist:
+            try:
+                result = bpy.ops.wm.save_userpref()
+                context["preferences_saved"] = "FINISHED" in result
+                context["preferences_operator_result"] = sorted(result)
+            except Exception as exc:
+                return skill_exception(exc, message="Add-on changed, but preferences could not be saved", **context)
+            if not context["preferences_saved"]:
+                return skill_error(
+                    "Add-on changed, but preferences were not saved", "save_userpref did not finish", **context
+                )
+        if enabled and operators and not all(after["operators"].values()):
             return skill_error(
-                f"Add-on was not disabled: {addon_module}",
-                "Blender completed the disable operation but the add-on is still enabled.",
-                before=before,
-                after=after,
+                "Add-on registered, but required Operators are unavailable", "Inspect after.operators", **context
             )
-        return skill_success(f"Disabled add-on {addon_module}", before=before, after=after)
-    except ImportError:
-        return skill_error("Blender not available", "bpy or addon_utils could not be imported")
+        return skill_success(f"{'Enabled' if enabled else 'Disabled'} add-on {addon_module}", **context)
     except Exception as exc:
-        return skill_exception(exc, message=f"Failed to disable add-on {addon_module}")
+        # Registration may have partially changed state; return readback whenever possible.
+        try:
+            after = _addon_status_data(addon_module, operators)
+        except Exception:
+            after = None
+        return skill_exception(exc, message=f"Failed to change add-on {addon_module}", after=after)
+
+
+def enable_addon(addon_module: str, persist: bool = False, operators: Optional[List[str]] = None) -> dict:
+    """Enable in the current process; optionally save default preferences."""
+    return _set_addon_enabled(addon_module, True, persist, operators)
+
+
+def disable_addon(addon_module: str, persist: bool = False) -> dict:
+    """Disable in the current process; optionally save default preferences."""
+    return _set_addon_enabled(addon_module, False, persist)
 
 
 def _area_context(screen_name: str, area: Any) -> Dict[str, Any]:
@@ -594,123 +662,26 @@ def install_addon(
     addon_module: Optional[str] = None,
     overwrite: bool = False,
     enable: bool = True,
+    sha256: Optional[str] = None,
+    target_directory: Optional[str] = None,
+    persist: bool = False,
 ) -> dict:
-    """Install a Blender add-on from a .py file or a .zip bundle.
-
-    Args:
-        file_path: The ``.py`` single-file add-on or ``.zip`` bundle to install.
-            Required. Reinstall an add-on Blender already knows by passing its
-            file again with ``overwrite=True``; a file dropped into an add-on
-            directory by other means is picked up by ``refresh_addons``.
-        addon_module: Expected module name after install, for example
-            ``io_scene_gltf2`` or ``my_addon``. Blender derives this from the
-            file name when omitted, but the derived name does not always match
-            the package inside an archive, so an explicit name is safer.
-        overwrite: Replace an already installed copy of the same add-on.
-        enable: Enable the add-on right after installing it.
-    """
-    # A source is mandatory: installing without one would call
-    # addon_install(filepath="") and fail inside Blender rather than here, and
-    # there is nothing to reinstall from. Reinstalling an add-on Blender
-    # already knows is done by passing its file again with overwrite=true.
+    """Install a hash-pinned legacy package through the shared native installer."""
     if not file_path:
-        return skill_error(
-            "No add-on file supplied",
-            "install_addon needs file_path (a .py or .zip). To reinstall an add-on Blender "
-            "already knows, pass its file again with overwrite=true. To make a manually "
-            "dropped file visible instead, use refresh_addons.",
-        )
-
-    path = Path(file_path).expanduser()
-    if not path.exists():
-        return skill_error(f"Add-on file not found: {path}", f"No file or directory at '{path}'.")
-    if path.is_dir():
-        return skill_error(
-            f"Add-on source is a directory: {path}",
-            "Pass a .py single-file add-on or a .zip bundle; a plain directory is not installable.",
-        )
-    if path.suffix.lower() not in {".py", ".zip"}:
-        return skill_error(
-            f"Unsupported add-on file: {path.name}",
-            "Blender installs .py single-file add-ons and .zip bundles.",
-        )
-
+        return skill_error("No add-on file supplied", "Use refresh_addons to discover existing packages")
     try:
-        import bpy
+        from dcc_mcp_blender.extension_packages import install_extension_package
 
-        try:
-            bpy.ops.preferences.addon_install(filepath=str(path), overwrite=bool(overwrite))
-        except Exception as exc:
-            return skill_exception(exc, message=f"Failed to install add-on from {path}")
-
-        # Installing does not refresh the module cache, so a freshly installed
-        # add-on is invisible until the list is refreshed.
-        try:
-            bpy.ops.preferences.addon_refresh()
-        except Exception:
-            pass
-        try:
-            _refresh_addon_modules()
-        except Exception:
-            pass
-
-        # Without addon_module there is nothing to confirm: the derived name is
-        # not reported back, because it routinely differs from the package name.
-        if addon_module is None:
-            return skill_success(
-                f"Installed add-on from {path.name}",
-                file_path=str(path),
-                module=None,
-                enabled=False,
-                refreshed=True,
-                prompt=(
-                    "Pass addon_module to confirm and enable the installed add-on; the module "
-                    "name Blender derives from a zip does not always match its package."
-                ),
-            )
-        resolved = addon_module
-
-        status = _addon_status_data(resolved)
-        if not status.get("installed"):
-            return skill_error(
-                f"Installed add-on not found: {resolved}",
-                f"Blender installed the file but no module named '{resolved}' is registered. "
-                "The module name derived from an archive does not always match its package, "
-                "so pass addon_module explicitly or check the name with list_addons.",
-            )
-
-        if not enable:
-            return skill_success(
-                f"Installed add-on {resolved}",
-                module=resolved,
-                enabled=False,
-                status=status,
-                prompt=f"Use enable_addon('{resolved}') to activate it.",
-            )
-
-        before = _addon_status_data(resolved)
-        try:
-            bpy.ops.preferences.addon_enable(module=resolved)
-        except Exception as exc:
-            return skill_exception(
-                exc,
-                message=f"Installed but failed to enable add-on {resolved}",
-                before=before,
-                after=_addon_status_data(resolved),
-            )
-        after = _addon_status_data(resolved)
-        if not after.get("enabled"):
-            return skill_error(
-                f"Add-on was not enabled: {resolved}",
-                "Blender completed the enable operation but the add-on is still disabled.",
-                before=before,
-                after=after,
-            )
-        return skill_success(f"Installed and enabled add-on {resolved}", before=before, after=after)
-    except ImportError:
-        return skill_error("Blender not available", "bpy or addon_utils could not be imported")
+        result = install_extension_package(
+            {"archive_path": file_path, "package_id": addon_module, "sha256": sha256, "package_kind": "legacy_addon"},
+            enable=enable,
+            overwrite=overwrite,
+            persist=persist,
+            target_directory=target_directory,
+        )
+        return skill_success("Blender legacy add-on installed", **result)
     except Exception as exc:
-        return skill_exception(exc, message=f"Failed to install add-on {path if path else addon_module}")
+        return skill_exception(exc, message="Failed to install add-on", **getattr(exc, "context", {}))
 
 
 def remove_addon(addon_module: str) -> dict:
@@ -728,6 +699,7 @@ def remove_addon(addon_module: str) -> dict:
             ``io_scene_gltf2``.
     """
     try:
+        _validate_addon_module(addon_module, mutate=True)
         import bpy
 
         before = _addon_status_data(addon_module)

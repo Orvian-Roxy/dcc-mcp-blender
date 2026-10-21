@@ -298,6 +298,10 @@ class BlenderMcpServer(DccServerBase):
         if not self._inprocess_executor_registered:
             raise RuntimeError("Blender main-thread in-process executor registration failed")
 
+        from ._managed_writes import install_write_guard
+
+        install_write_guard(self._execution_bridge, self.get_skill)
+
         self._extra_skill_paths: List[str] = list(options.extra_skill_paths or [])
 
         if _env.resolve_metrics_enabled(options.metrics_enabled):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -23,7 +24,7 @@ def isolated_working_directory(tmp_path, monkeypatch):
 
 
 def host(tmp_path):
-    data = SimpleNamespace(filepath="")
+    data = SimpleNamespace(filepath="", is_dirty=False, images=[])
 
     def abspath(value):
         if value.startswith("//"):
@@ -239,6 +240,48 @@ def test_operator_exception_does_not_claim_no_side_effects_or_retry(tmp_path):
     assert result["context"]["mutation_applied"] is None
     assert path.read_bytes() == b"partial"
     bpy.ops.wm.save_as_mainfile.assert_called_once()
+
+
+@pytest.mark.parametrize("status", [{"FINISHED", "CANCELLED"}, {"FINISHED", "RUNNING_MODAL"}, ["FINISHED"]])
+def test_nonfinished_save_cannot_be_confirmed_by_later_file_observation(tmp_path, monkeypatch, status):
+    from dcc_mcp_blender import _scene_files
+
+    bpy = host(tmp_path)
+    target = tmp_path / "uncertain.blend"
+    native_save = bpy.ops.wm.save_as_mainfile.side_effect
+
+    def partial_save(filepath):
+        native_save(filepath)
+        return status
+
+    bpy.ops.wm.save_as_mainfile.side_effect = partial_save
+    assert not call(bpy, filepath=str(target))["success"]
+    monkeypatch.setitem(sys.modules, "bpy", bpy)
+    assert _scene_files.file_state()["save_status"] != "saved"
+    bpy.ops.wm.save_as_mainfile.assert_called_once()
+
+
+def test_extensionless_save_observes_existing_native_target_before_confirming(tmp_path, monkeypatch):
+    from dcc_mcp_blender import _scene_files
+
+    bpy = host(tmp_path)
+    requested = tmp_path / "delayed"
+    target = requested.with_suffix(".blend")
+    target.write_bytes(b"old native target")
+
+    def delayed_save(filepath):
+        bpy.data.filepath = str(target)
+        return {"FINISHED"}
+
+    bpy.ops.wm.save_as_mainfile.side_effect = delayed_save
+    result = call(bpy, filepath=str(requested))
+    assert not result["success"]
+    assert result["context"]["save_status"] == "pending"
+    monkeypatch.setitem(sys.modules, "bpy", bpy)
+    assert _scene_files.file_state()["save_status"] != "saved"
+    target.write_bytes(b"completed native save")
+    assert _scene_files.file_state()["save_status"] == "saved"
+    bpy.ops.wm.save_as_mainfile.assert_called_once_with(filepath=str(requested))
 
 
 def test_readback_permission_error_is_not_success_or_automatic_retry(tmp_path, monkeypatch):

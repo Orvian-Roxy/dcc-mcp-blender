@@ -1,0 +1,63 @@
+{
+  "scope": "HSR DCC co-work migration qualification, Dahlia only; not global activation or visual/physics acceptance",
+  "nodebpy_baseline": "d9ef82d2752e279718fa5b00d484b89a05dd4f31",
+  "adapter_baseline": "f8802b698192a19ff39b2a7c5ed1cbf0245dd8b3",
+  "nodebpy_owned_source_sha256": {
+    "HonkaiStarRail/build_character.py": "1e280d0177a9decf7e264918cf3c7db2f1252744e011975362a5574de1e3ef36",
+    "HonkaiStarRail/docs/guides/reference-preset.md": "2e9dc28780a312f3b1ed3a6214224337e55ad177f73dd0709e0a701db2d11d59",
+    "docs/guides/blender-session.md": "0aebcfc4bf04e891b852c49c949e07cc6cb8bcaecb0f64cd86f39df049a5f6fd",
+    "docs/guides/build-entry.md": "3dcd67016e1f9479facc1a60b2c732acdefeeb7bb67b7ca935f735a9a4566e47",
+    "nodebpy_build.py": "8b1be6f5fe6082b58764b5923bee78d2ad874f56dc2941626efa7aa58a6c6d37",
+    "tests/test_cowork_entry.py": "713fbca34883da3df646d5ff7bc11da5a6875d048a05005a1518b801a0b9d6e4",
+    "tests/test_cowork_hsr.py": "e87ef09da93421d0b448a7f640d2216d82f678db91fc5753acee266224f5496d"
+  },
+  "adapter_schema_sha256": "f2e6f83ae1d36485f41ae92f35e31b183815d429d898295615fd6e198034a2a9",
+  "versions": {
+    "adapter": "0.2.21",
+    "core": "0.20.45",
+    "server": "0.20.45",
+    "cli": "0.20.45",
+    "npr": "0.4.0-alpha.4",
+    "mmd_tools": "4.5.11 native API1"
+  },
+  "before": {
+    "public_cli_exit": 2,
+    "reason": "Existing typed schema rejects game=hsr"
+  },
+  "after": {
+    "host_check_passed": true,
+    "host_limits_visible": true,
+    "run_passed": true,
+    "run_seconds": 10.876024875004077,
+    "metrics": {
+      "faces": 51120,
+      "vertices": 38151,
+      "materials": 45
+    },
+    "objects": 995,
+    "saved_after_run": true,
+    "verify_passed": true,
+    "verify_seconds": 0.3281850829953328,
+    "verify_reports_unsaved": true,
+    "simulated_edit_preserved": true,
+    "views_preserved": true,
+    "explicit_final_save_confirmed": true,
+    "final_saved_clean_no_pending": true,
+    "file_bytes": 11771106
+  },
+  "tests": {
+    "nodebpy_passed": 742,
+    "nodebpy_skipped": 41,
+    "adapter_passed": 1936,
+    "adapter_skipped": 42,
+    "adapter_deselected": 2,
+    "existing_skill_linter": "pass",
+    "skill_creator_quick_validate": "pass"
+  },
+  "raw_receipts_private_root": "/Users/chenrui/Documents/Codex/2026-10-17/task/dcc-live-hsr-run-20261017",
+  "global_config_modified": false,
+  "new_dependencies_installed": false,
+  "mmd_preferences_saved": false,
+  "human_approved": false,
+  "physical_quality_accepted": false
+}
