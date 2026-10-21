@@ -15,6 +15,7 @@ from ._script_guard import guard_main_thread
 
 # One process-local observation, not a task history or a replay queue.
 _LAST_SAVE = {}
+_LAST_OPEN = {}
 logger = logging.getLogger(__name__)
 
 
@@ -46,6 +47,8 @@ def open_scene(filepath: str) -> dict:
         refusal = _replacement_guard(bpy)
         if refusal:
             return refusal
+        path = Path(filepath).expanduser().resolve()
+        before = _file_stamp(path)
         status = sorted(bpy.ops.wm.open_mainfile(filepath=filepath, load_ui=False))
         if "FINISHED" not in status:
             return skill_error("Scene was not opened", "open_incomplete", operator_status=status, filepath=filepath)
@@ -59,7 +62,11 @@ def open_scene(filepath: str) -> dict:
                 actual_filepath=actual_path,
             )
         _LAST_SAVE.clear()
-        saved_through(current_revision())
+        _LAST_OPEN.clear()
+        after = _file_stamp(path)
+        if before is not None and after == before and after["size"] > 0 and can_confirm_save():
+            _LAST_OPEN.update(filepath=str(path), file_observation=after, write_revision=current_revision())
+            saved_through(current_revision())
         return skill_success("Scene opened", filepath=actual_path, operator_status=status)
     except Exception as exc:
         return skill_exception(exc, message="Failed to open scene")
@@ -88,6 +95,7 @@ def save_scene(filepath=None) -> dict:
             return skill_error("Provide a filepath for the first save", "filepath_required", save_status="failed")
         path = Path(target).expanduser().resolve()
         before = _file_stamp(path)
+        _LAST_OPEN.clear()
         _LAST_SAVE.clear()
         _LAST_SAVE.update(
             filepath=str(path),
@@ -177,6 +185,7 @@ def new_scene() -> dict:
         if "FINISHED" not in status:
             return skill_error("New scene did not finish", "new_scene_incomplete", operator_status=status)
         _LAST_SAVE.clear()
+        _LAST_OPEN.clear()
         saved_through(current_revision())
         return skill_success("New scene created", operator_status=status)
     except Exception as exc:
@@ -203,20 +212,25 @@ def close_scene() -> dict:
 
 
 def file_state() -> dict:
-    """Observe the last save attempt without writing or retrying it."""
+    """Observe a confirmed save or stable typed open without writing the file."""
     import bpy
 
     refusal = guard_main_thread("file_state")
     if refusal:
         return refusal
-    target = _LAST_SAVE.get("filepath")
+    target = _LAST_SAVE.get("filepath") or _LAST_OPEN.get("filepath")
     observed = _file_stamp(Path(target)) if target else None
     current = bpy.data.filepath
     status = _LAST_SAVE.get("save_status", "unknown")
+    source = None
+    dirty_images = [
+        image.name for image in bpy.data.images if image.is_dirty and image.type not in {"RENDER_RESULT", "COMPOSITING"}
+    ]
     same_file = bool(current and target) and Path(current).resolve() == Path(target).resolve()
     if (
         not same_file
         or bpy.data.is_dirty
+        or dirty_images
         or _LAST_SAVE.get("write_revision") != current_revision()
         or not _LAST_SAVE.get("confirmable", False)
     ):
@@ -228,13 +242,28 @@ def file_state() -> dict:
         and observed != _LAST_SAVE.get("before")
     ):
         status = "saved"
+        source = "save"
         saved_through(_LAST_SAVE["write_revision"])
+    if (
+        not _LAST_SAVE
+        and same_file
+        and not bpy.data.is_dirty
+        and not dirty_images
+        and not pending_write()
+        and _LAST_OPEN.get("write_revision") == current_revision()
+        and observed is not None
+        and observed == _LAST_OPEN.get("file_observation")
+    ):
+        status, source = "saved", "open"
     return dict(
         filepath=current,
         scene_dirty=bool(bpy.data.is_dirty),
         pending_managed_write=pending_write(),
         save_status=status,
+        state_source=source,
         last_save=dict(_LAST_SAVE),
+        last_open=dict(_LAST_OPEN),
+        dirty_images=dirty_images,
         file_observation=observed,
     )
 
@@ -296,6 +325,7 @@ def observe_external_save(filepath, before_stamp, operator_status):
 
         path = Path(filepath).expanduser().resolve()
         status = sorted(operator_status)
+        _LAST_OPEN.clear()
         _LAST_SAVE.clear()
         _LAST_SAVE.update(
             filepath=str(path),

@@ -328,6 +328,11 @@ def _read_value(value, prop):
         raise ValueError("Complex RNA values require an explicit owner/group path.")
     if getattr(prop, "is_array", False) and not 0 < getattr(prop, "array_length", 0) <= 32:
         raise ValueError("RNA array length exceeds the supported bound.")
+    if prop.type == "ENUM" and not getattr(prop, "is_enum_flag", False) and not getattr(prop, "is_array", False):
+        # A native read can return a dynamic choice absent from enum_items_static.
+        if _byte_length(value) > 8192:
+            raise ValueError("A property value may encode at most 8192 bytes.")
+        return _scalar_value(value, "ENUM")
     if prop.type == "ENUM" and getattr(prop, "is_enum_flag", False):
         value = sorted(value)
     elif getattr(prop, "is_array", False):

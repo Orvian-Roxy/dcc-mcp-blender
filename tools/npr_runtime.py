@@ -141,7 +141,7 @@ def environment(config):
                 ("EXTENSIONS", "extensions"),
             )
         },
-        "DCC_MCP_REGISTRY_DIR": str(work / "registry"),
+        "DCC_MCP_REGISTRY_DIR": str(Path(config.get("registry_dir", work / "registry"))),
         "DCC_MCP_GATEWAY_PROFILE": "local",
         "DCC_MCP_GATEWAY_PORT": str(config["gateway_port"]),
         "DCC_MCP_GATEWAY_REMOTE_PORT": "0",
@@ -168,33 +168,35 @@ def start(config, dry_run=False):
         version = subprocess.run([config[key], "--version"], capture_output=True, text=True, timeout=10, check=False)
         if version.returncode or version.stdout.strip().split() != [name, VERSIONS["cli"]]:
             raise ValueError(f"{key} must be {name} {VERSIONS['cli']}; fix --config.")
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", config["gateway_port"]))
+    if not config.get("shared_gateway", False):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", config["gateway_port"]))
     work.mkdir(parents=True, exist_ok=False)
     for directory in ("config", "scripts", "datafiles", "extensions", "registry"):
         (work / directory).mkdir()
     (work / "config.json").write_text(json.dumps(config, ensure_ascii=False, indent=2))
     (work / "launch-plan.json").write_text(json.dumps(launch_plan(config), ensure_ascii=False, indent=2))
     child_env = {**os.environ, **environment(config)}
-    cli_run(
-        config,
-        [
-            "gateway",
-            "ensure",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(config["gateway_port"]),
-            "--remote-port",
-            "0",
-            "--registry-dir",
-            str(work / "registry"),
-            "--gateway-bin",
-            config["gateway_bin"],
-        ],
-        child_env,
-        "gateway.json",
-    )
+    if not config.get("shared_gateway", False):
+        cli_run(
+            config,
+            [
+                "gateway",
+                "ensure",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(config["gateway_port"]),
+                "--remote-port",
+                "0",
+                "--registry-dir",
+                str(Path(config.get("registry_dir", work / "registry"))),
+                "--gateway-bin",
+                config["gateway_bin"],
+            ],
+            child_env,
+            "gateway.json",
+        )
     report = cli_run(
         config,
         [
@@ -234,7 +236,7 @@ def start(config, dry_run=False):
     ):
         raise RuntimeError(f"NPR identity does not match the selected environment; inspect {work} without relaunching.")
     return dict(
-        ready=True,
+        ready=host.get("environment_ready", True),
         **host,
         work_dir=str(work),
         base_url=config["base_url"],
@@ -267,6 +269,35 @@ def cli_run(config, arguments, child_env, receipt=None, allow_failure=False):
             f"DCC CLI failed: {json.dumps(result)[:2000]}; inspect status --work-dir {config['work_dir']} before another launch."
         )
     return result
+
+
+def prepare_navigation(config):
+    """Apply explicit user navigation defaults after factory startup."""
+    settings = config.get("navigation_preferences", {})
+    allowed = {"use_mouse_depth_navigate", "use_zoom_to_mouse", "use_rotate_around_active"}
+    if not isinstance(settings, dict) or any(
+        key not in allowed or type(value) is not bool for key, value in settings.items()
+    ):
+        raise ValueError("navigation_preferences must contain only supported navigation booleans.")
+    if not settings:
+        return {}
+    import bpy
+
+    for key, value in settings.items():
+        setattr(bpy.context.preferences.inputs, key, value)
+    if "FINISHED" not in bpy.ops.wm.save_userpref():
+        raise RuntimeError("Navigation preferences were not saved.")
+    return {key: getattr(bpy.context.preferences.inputs, key) for key in settings}
+
+
+def prepare_addons(config):
+    """Enable configured installed add-ons in this instance's private preferences."""
+    from dcc_mcp_blender._dev_ops import enable_addon
+
+    return {
+        item["module"]: enable_addon(item["module"], persist=True, operators=item.get("operators"))
+        for item in config.get("addons", [])
+    }
 
 
 def bootstrap(config):
@@ -310,10 +341,12 @@ def bootstrap(config):
         if not operation or not project or str(Path(project).resolve()) != config["project_root"]:
             raise RuntimeError("Launch through npr_runtime.py start so the official CLI supplies the project binding.")
         os.environ["NODEBPY_BLENDER_BINARY"] = str(binary)
+        navigation = prepare_navigation(config)
+        addons = prepare_addons(config)
         server = dcc_mcp_blender.start_server(
             port=0,
             gateway_port=config["gateway_port"],
-            registry_dir=str(work / "registry"),
+            registry_dir=str(Path(config.get("registry_dir", work / "registry"))),
             dispatcher=BlenderUiDispatcher(idle_interval_secs=config["idle_interval_secs"]),
             include_bundled=False,
             enable_hot_reload=False,
@@ -326,6 +359,9 @@ def bootstrap(config):
         # Core 0.20.45's public native method merges project binding into this adapter's row.
         server._handle.update_gateway_metadata({"dcc_mcp_project": project, "dcc_mcp_operation_id": operation})
         host = dict(
+            environment_ready=all(result.get("success") for result in addons.values()),
+            navigation_preferences=navigation,
+            addons=addons,
             instance_id=server.instance_id,
             instance_port=server.port,
             pid=os.getpid(),
@@ -349,6 +385,8 @@ def bootstrap(config):
 def status(work_dir):
     """Observe a previous launch; never issue another launch or rewrite its files."""
     work = Path(work_dir).expanduser().resolve()
+    if not work.exists():
+        return dict(ready=False, instance=None, work_dir=str(work))
     config = json.loads((work / "config.json").read_text())
     host_path = work / "host.json"
     if not host_path.exists():
@@ -366,10 +404,12 @@ def status(work_dir):
         {**os.environ, **environment(config)},
         allow_failure=True,
     )
-    observed_id = report.get("instance", {}).get("instance_id")
+    observed_id = (report.get("instance") or {}).get("instance_id")
     return dict(
         **host,
-        ready=report.get("ready") is True and observed_id == host["instance_id"],
+        ready=report.get("ready") is True
+        and observed_id == host["instance_id"]
+        and host.get("environment_ready", True),
         work_dir=str(work),
         base_url=config["base_url"],
         observation=report,

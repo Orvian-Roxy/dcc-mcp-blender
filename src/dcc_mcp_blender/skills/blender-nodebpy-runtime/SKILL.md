@@ -34,9 +34,16 @@ The adapter checks shared save evidence after `run` and `verify`. Pending manage
 Python edits or an unknown save observation downgrade the project's saved claim,
 while preserving structural verification. Observation does not save or reopen.
 
-Existing reconstruction validators may temporarily switch and restore material
-bindings. `verify` therefore remains a conservative managed write. To establish
-a saved scene afterward, use the typed save tool and read-only session state.
+Audited `wuwa` / `WutheringWaves` and `hsr` / `HonkaiStarRail` verification only
+observes the current candidate, preserving managed revision and any existing
+pending edits even when verification fails. Genshin reconstruction verification
+also observes bindings and independently decodes external images when the loaded
+project `execute` declares that capability. Older Genshin checkouts and ZZZ
+verification retain conservative managed-write classification. Independent decode
+checks the file without reloading scene image pixels; build/packaging reloads keep
+their existing purpose.
+After a possible write, use the typed save tool and read-only session state to
+confirm persistence. Arbitrary Python remains a possible write, including queries.
 
 `context.project_elapsed_seconds` measures the project entry call, including its
 import, validation, computation and file operations. CLI wall time minus this value
