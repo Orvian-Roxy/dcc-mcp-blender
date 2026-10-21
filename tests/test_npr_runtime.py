@@ -94,7 +94,7 @@ def test_start_delegates_isolated_gateway_and_native_lifecycle_before_claiming_r
                 binary_path=data["binary_path"],
                 binary_sha256=data["binary_sha256"],
                 build=data["expected_build"][:12],
-                adapter="0.2.21",
+                adapter=launcher().VERSIONS["adapter"],
                 core="0.20.45",
                 server="0.20.45",
                 background=False,
@@ -142,7 +142,7 @@ def test_host_bootstrap_uses_exact_runtime_and_registers_native_lifecycle_bindin
     )
     adapter = SimpleNamespace(
         __file__=str(Path(data["source_root"]) / "src/dcc_mcp_blender/__init__.py"),
-        __version__="0.2.21",
+        __version__=launcher().VERSIONS["adapter"],
         start_server=lambda **kwargs: calls.append(("start", kwargs)) or server,
     )
     bpy = SimpleNamespace(

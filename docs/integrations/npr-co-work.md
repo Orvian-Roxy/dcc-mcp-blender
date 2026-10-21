@@ -1,6 +1,6 @@
 # NPR 共作的归属、流程与验收状态
 
-DCC 是主开发项目。当前开发基于 adapter 0.2.21，验收固定 Core、server 和 CLI 0.20.45。此 checkout 的实现和私有 NPR 验收从未切换生产 MCP。迁移范围见 [Spec #14](https://github.com/Orvian-Roxy/blender-mcp-runtime/issues/14)。
+DCC 接入在自有仓库 `Orvian-Roxy/dcc-mcp-blender` 整合、检查和合并，不以上游同步或合并为交付条件。当前 adapter 版本以本 checkout 的 `pyproject.toml` 为准，NPR 启动器据此核对源码与加载版本；Core、server 和 CLI 的验收版本仍固定为 0.20.45。下文保留了 adapter 0.2.21 等历史验收基线，不能代替当前版本检查。原迁移范围见 [Spec #14](https://github.com/Orvian-Roxy/blender-mcp-runtime/issues/14)。
 
 当前 MMD 目标按用户最新指令收敛为 MMD Tools 4.5.11 的 native API1 适配包，配套 NPR alpha.4。它已经包含原 MMR 的原生碰撞构建能力，不需要启用 MMR 插件。此前官方 MMD Tools 4.5.14 的隔离结果属于旧基线，不能代替此适配包的验证。
 
@@ -10,13 +10,13 @@ MMD Tools 的源码、打包、版本和安装更新统一由[插件维护会话
 
 | 内容 | 归属 |
 | --- | --- |
-| 实例路由、主线程执行、插件管理、RNA 和节点工具 | DCC adapter。沿用上游 Core、server 和 CLI |
+| 实例路由、主线程执行、插件管理、RNA 和节点工具 | 自有 DCC adapter，复用现有 Core、server 和 CLI 依赖 |
 | 当前 MMD Tools 原生物理 | DCC 现有 live Operator/RNA 调用 `mmd_tools.build_rig`，不新增 provider |
-| 遗留可选 Native 方法 | Runtime `ce9ae34` 经 [DCC 入口](../../src/dcc_mcp_blender/_native_runtime_ops.py)直接调用。Toon、MBTS 和 Wiggle 不作为当前 MMD 路径的前置 |
+| 遗留可选 Native 方法 | 本次未集成；历史实现和回执保留在[原迁移分支](https://github.com/Orvian-Roxy/dcc-mcp-blender/tree/codex/npr-runtime-dependency-20261017)。Toon、MBTS 和 Wiggle 不作为当前 MMD 路径的前置 |
 | 构建、业务验证、材质配方和资产 | NodeBPY-Bridges 与 Assets。DCC [接入层](../../src/dcc_mcp_blender/_nodebpy_runtime_ops.py)调用项目入口 |
 | 远端烘焙、物理计算、渲染和作业 | 现有 Fleet CLI 与 Worker，保持原接口和配置 |
 
-当前 MMD Tools 路径不依赖旧 Runtime。仅使用遗留 Native 方法时才附加其依赖路径。DCC 不转调旧 MCP，也不接管 NodeBPY 业务代码或资产。生产配置、现有会话和 Worker 继续使用原入口。
+当前 MMD Tools 路径不依赖旧 Runtime，不需要附加其依赖路径。DCC 不转调旧 MCP，也不接管 NodeBPY 业务代码或资产。本次 Git 整合不修改已部署配置、现有会话或 Worker。
 
 `mmd.toon.*` 对应旧 Runtime 的可选 `mmd_toon_lookdev` 接口，和 MMD Tools、MBTS 是不同组件。没有证据表明当前工作路径需要它。此前将其缺包列为迁移阻塞是范围判断错误，现撤销该前置；不要求用户查找或安装。
 
@@ -110,7 +110,7 @@ NodeBPY `verify` 对已审计的 `wuwa` / `WutheringWaves` 和 `hsr` / `HonkaiSt
 
 失败传播按业务回执判断：NodeBPY 入口未返回 `ok:true` 时，adapter 返回 `success:false` 并保留原结果。Core 0.20.45 的本地 HTTP MCP 回归已确认，该结果同时成为 `structuredContent.success:false` 和外层 `isError:true`；`full` 两种取值均保留失败证据。依赖动作只有在业务成功时继续，HTTP 200 或 CLI 正常退出不能单独证明前一步成功。此检查无需真实 Blender，不代表已部署版本完成验收。
 
-## 本机验收边界
+## 历史本机验收（2026-10-17—20）
 
 最新[第二阶段验收](/Users/chenrui/.codex/worktrees/addon-capabilities-research/blender-mcp-runtime/outputs/research/plugin-management-2026-10-17/核心接入第二阶段.md)已完成三游戏真实共作、Hiyuki 历史 BVH/clip 和 Fleet 0–2030 计算回收及本地缓存检查。DCC 1,936 项、NodeBPY 730 项测试通过（另有 43 项跳过）；Vivian 仍是 diagnostic_only，物理表面质量未重验。三个完成负载的本轮私有实例已保存后正常关闭，另一次未写入场景的进程退出记录保留，历史窗口未动；未切换生产。下列为第一阶段的固定目标与历史回执。
 
@@ -134,7 +134,7 @@ NodeBPY `verify` 对已审计的 `wuwa` / `WutheringWaves` 和 `hsr` / `HonkaiSt
 
 共作可用不等于角色外观或物理质量通过。后两项由对应项目验证。这些本机结果也不代表已经部署到生产。
 
-实现提交：DCC `2540724`、`2bd8452`、`698ade8`、`6396240`、`36be7ca`、`672f7ef`、`98ce7a8`；NodeBPY `6bb7f60`、`112600d`、`d1cc188`；Runtime provider `ce9ae34`。均为本地任务分支提交，尚未推送。
+当时的实现提交：DCC `2540724`、`2bd8452`、`698ade8`、`6396240`、`36be7ca`、`672f7ef`、`98ce7a8`；NodeBPY `6bb7f60`、`112600d`、`d1cc188`；Runtime provider `ce9ae34`。其中可选 Native provider `698ade8` 不在本次主线整合范围内。
 
 集成检查为 DCC 1918 passed、42 skipped、2 deselected；后续仅验收 helper 调整，62 项相关检查通过。NodeBPY 全套 766 passed、43 skipped。Runtime 原套件 4311 passed、13 skipped，六项 stdio 因测试禁止 worktree 路径而失败；原样复制源码至非禁止路径后，六项与 61 项 provider 检查共 67 项通过，未放宽测试。
 
@@ -146,6 +146,14 @@ run03、run04 均保存后明确关闭；run05 保留为历史验收现场，最
 
 本次在 `codex/workflow-feedback-closeout-20261021` 独立分支中，以 `ddf3980` 为基线保存本会话的 38 个增量文件，涵盖批量材质反馈、Closure 节点 revision、固定视口观察与导航、保存状态观察、NPR 启动和插件准备。原工作区和已有实例保持不变。
 
-该基线包含尚未进入官方主线的 Node/RNA runtime、managed file、NodeBPY 共作和 NPR 启动基础。增量提交依赖这些既有实现，不是可直接应用于当前 `main` 的独立补丁。基线中的插件源码归属、打包和 CI 迁移另属原迁移任务，不随本次保全合并。
+该基线包含增量所需的 Node/RNA runtime、managed file、NodeBPY 共作和 NPR 启动基础。增量提交依赖这些既有实现，不是可直接应用于自有仓库 `main` 的独立补丁。主线整合按这些依赖选取提交，插件源码归属、打包和 CI 迁移另属原迁移任务，不随本次合并。
 
 隔离源码导入路径已核对，14 份相关测试文件共 334 项通过，29 份变更 Python 文件的 Ruff、Skill lint 和差异格式检查通过。本次仅保存 Git 增量并运行针对性宿主检查，沿用上文已有原生证据；没有启动 Blender、重新验收运行环境或切换部署。
+
+## 自有仓库主线整合（2026-10-22）
+
+本次以自有仓库 `main` 的 `b68b6d6` 为基线，接入上述增量所需的 Node/RNA runtime、managed file、NodeBPY 共作和 NPR 启动基础。保留 `main` 的打包、CI 和依赖声明；不包含插件源码归属迁移或遗留 Native provider。保存逻辑集中在既有 `_scene_files`，保留 `main` 的精确 Operator 结果、路径及非空文件核验，再衔接 managed revision 和延迟保存观察；公开脚本只转调这一实现。
+
+整合后完整宿主测试为 2,536 passed、44 skipped、2 deselected；Ruff lint、format、Skill lint 和差异检查通过。本地另用 Python 3.7 grammar 解析 620 份文件，仅证明语法解析，不等同于运行 3.7 解释器。
+
+真实 NPR 后台合成验收使用上文 alpha.4 Cocoa 修复版，隔离配置且不启动 GUI：保存成功，clean、已有 managed pending 和脏图像三种状态均正确保留；后两种仍拒绝替换。进程 PID 63035 已正常退出，耗时 2.466 秒；回执与日志位于 `/private/tmp/dcc-owned-native-20261022-bvttayv1/`。HSR 业务回调仍为显式 fixture，本次未读取角色资产或操作其他实例，也未修改部署。节点批量反馈的已有原生证据继续适用于未改动的实现。

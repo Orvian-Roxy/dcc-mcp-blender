@@ -3,6 +3,10 @@
 > Navigation map for AI agents. Detailed API lives in `README.md` and `llms.txt`.
 > This file is a **map**, not an encyclopedia — follow the links for depth.
 
+## Repository ownership
+
+Integrate, test and merge in `Orvian-Roxy/dcc-mcp-blender`, the user-owned repository. Do not make upstream synchronization, upstream PRs or upstream merge permission a delivery requirement unless the user explicitly requests them. Keep the required project dependencies; unrelated packaging or architecture changes stay separately scoped.
+
 ## Build & test
 
 ```bash

@@ -6,6 +6,8 @@ Trusted Python can call bpy directly; this module is not a Python sandbox.
 from __future__ import annotations
 
 import logging
+import os
+import stat
 from pathlib import Path
 
 from dcc_mcp_core.skill import skill_error, skill_exception, skill_success
@@ -74,60 +76,117 @@ def open_scene(filepath: str) -> dict:
 
 def _file_stamp(path):
     try:
-        stat = path.stat()
-        return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+        observed = path.stat()
+        if not stat.S_ISREG(observed.st_mode):
+            return None
+        return {"size": observed.st_size, "mtime_ns": observed.st_mtime_ns}
     except FileNotFoundError:
         return None
 
 
+def _absolute_path(bpy, path):
+    """Resolve Blender's // syntax before Save As changes the relative base."""
+    return os.path.abspath(bpy.path.abspath(path))
+
+
+def _same_destination(left, right):
+    if os.path.normcase(os.path.realpath(left)) == os.path.normcase(os.path.realpath(right)):
+        return True
+    try:
+        return os.path.samefile(left, right)
+    except OSError:
+        return False
+
+
+def _save_failure(code, detail, attempted, *, save_status=None, **context):
+    return skill_error(
+        "Failed to save scene",
+        detail,
+        error_code=code,
+        save_attempted=attempted,
+        mutation_applied=None if attempted else False,
+        save_status=save_status or ("unknown" if attempted else "failed"),
+        prompt="Inspect the actual scene path and target file before retrying. No automatic retry or rollback was performed.",
+        **context,
+    )
+
+
 def save_scene(filepath=None) -> dict:
-    """Save once and confirm the current file, without replaying uncertain writes."""
+    """Save once and confirm the native file and managed revision without replay."""
     refusal = guard_main_thread("save_scene")
     if refusal:
         return refusal
-    target = filepath
+    attempted = False
     status = []
+    if filepath is not None and (not isinstance(filepath, str) or not filepath.strip() or "\x00" in filepath):
+        return _save_failure("invalid_filepath", "filepath must be a non-empty path string or omitted.", False)
     try:
         import bpy
 
-        target = filepath or bpy.data.filepath
-        if not target:
-            return skill_error("Provide a filepath for the first save", "filepath_required", save_status="failed")
-        path = Path(target).expanduser().resolve()
-        before = _file_stamp(path)
+        requested = filepath if filepath is not None else bpy.data.filepath
+        if not isinstance(requested, str) or not requested:
+            return _save_failure(
+                "save_path_required", "The scene has not been saved yet. Please provide a filepath.", False
+            )
+        destination = _absolute_path(bpy, requested)
+        expected_paths = [destination]
+        if filepath is not None and not destination.lower().endswith(".blend"):
+            expected_paths.append(destination + ".blend")
+        before = {}
+        observable = True
+        for path in expected_paths:
+            try:
+                before[path] = _file_stamp(Path(path))
+            except OSError:
+                # Do not skip the native operation because its earlier metadata
+                # could not be read, but do not claim a changed file afterward.
+                before[path] = None
+                observable = False
         _LAST_OPEN.clear()
         _LAST_SAVE.clear()
         _LAST_SAVE.update(
-            filepath=str(path),
-            before=before,
+            filepath=destination,
+            before=before[destination],
+            before_candidates=before,
             operator_status=[],
             save_status="unknown",
             write_revision=current_revision(),
-            confirmable=can_confirm_save(),
+            confirmable=can_confirm_save() and observable,
         )
-        if filepath:
-            status = sorted(bpy.ops.wm.save_as_mainfile(filepath=str(path)))
-        else:
-            status = sorted(bpy.ops.wm.save_mainfile())
+        attempted = True
+        result = (
+            bpy.ops.wm.save_as_mainfile(filepath=destination) if filepath is not None else bpy.ops.wm.save_mainfile()
+        )
+        status = (
+            sorted(result)
+            if isinstance(result, set) and all(isinstance(item, str) for item in result)
+            else type(result).__name__
+        )
         _LAST_SAVE["operator_status"] = status
-        if "FINISHED" not in status:
+        if not isinstance(result, set) or result != {"FINISHED"}:
             _LAST_SAVE["save_status"] = "pending" if "RUNNING_MODAL" in status else "failed"
-            return skill_error(
-                "Save did not finish",
-                "save_incomplete",
-                filepath=str(path),
+            return _save_failure(
+                "save_not_finished",
+                "Blender did not report an unambiguous FINISHED status; an existing target file is not proof of a successful save.",
+                True,
+                filepath=destination,
+                operator_result=status,
                 operator_status=status,
-                save_status="pending" if "RUNNING_MODAL" in status else "failed",
+                save_status=_LAST_SAVE["save_status"],
             )
-        return _observe_save(bpy, path, before, status)
+        return _observe_save(
+            bpy, Path(destination), before[destination], status, requested_path=requested, expected_paths=expected_paths
+        )
+    except ImportError:
+        return _save_failure("blender_unavailable", "bpy could not be imported.", attempted)
     except Exception as exc:
-        return skill_exception(
-            exc,
-            message="Save state is unknown",
-            filepath=str(target),
-            save_status="unknown",
+        return _save_failure(
+            "save_failed" if attempted else "save_preflight_failed",
+            str(exc),
+            attempted,
+            error_type=type(exc).__name__,
+            operator_result=status,
             operator_status=status,
-            prompt="Inspect current file state before another write; do not automatically retry this save.",
         )
 
 
@@ -236,7 +295,7 @@ def file_state() -> dict:
     ):
         status = "unknown"
     elif (
-        "FINISHED" in _LAST_SAVE.get("operator_status", [])
+        _LAST_SAVE.get("operator_status") == ["FINISHED"]
         and observed is not None
         and observed["size"] > 0
         and observed != _LAST_SAVE.get("before")
@@ -268,36 +327,76 @@ def file_state() -> dict:
     )
 
 
-def _observe_save(bpy, path, before, status):
-    after = _file_stamp(path)
+def _observe_save(bpy, path, before, status, *, requested_path=None, expected_paths=None):
     actual = bpy.data.filepath
+    if not isinstance(actual, str) or not actual:
+        return _save_failure(
+            "save_path_unverified",
+            "Blender did not report a saved scene filepath.",
+            True,
+            operator_result=status,
+            operator_status=status,
+        )
+    actual = _absolute_path(bpy, actual)
+    matched = next((target for target in expected_paths or [str(path)] if _same_destination(actual, target)), None)
+    if matched is None:
+        return _save_failure(
+            "save_path_mismatch",
+            "Blender's saved scene filepath does not match the requested destination.",
+            True,
+            operator_result=status,
+            operator_status=status,
+            requested_filepath=requested_path or str(path),
+            actual_filepath=actual,
+        )
+    before = _LAST_SAVE.get("before_candidates", {}).get(matched, before)
+    _LAST_SAVE.update(filepath=actual, before=before)
+    saved_stat = os.stat(actual)
+    if not stat.S_ISREG(saved_stat.st_mode) or saved_stat.st_size <= 0:
+        return _save_failure(
+            "save_file_unverified",
+            "The reported destination is not a nonempty regular file.",
+            True,
+            operator_result=status,
+            operator_status=status,
+            actual_filepath=actual,
+        )
+    after = {"size": saved_stat.st_size, "mtime_ns": saved_stat.st_mtime_ns}
     confirmed = (
-        can_confirm_save()
-        and bool(actual)
-        and Path(actual).resolve() == path
+        status == ["FINISHED"]
+        and can_confirm_save()
+        and _LAST_SAVE.get("confirmable", False)
         and not bpy.data.is_dirty
-        and after is not None
-        and after["size"] > 0
         and after != before
     )
     context = dict(
-        filepath=str(path),
+        filepath=actual,
+        requested_filepath=requested_path or str(path),
         actual_filepath=actual,
         scene_dirty=bool(bpy.data.is_dirty),
+        operator_result=status,
         operator_status=status,
         file_observation=after,
+        file_size_bytes=saved_stat.st_size,
     )
     _LAST_SAVE["save_status"] = "saved" if confirmed else "pending"
     if not confirmed:
-        return skill_error(
-            "Save not yet confirmed",
+        return _save_failure(
             "save_unconfirmed",
+            "Save not yet confirmed; observe current file state before another write.",
+            True,
             save_status="pending",
-            prompt="Inspect current file state before another write; do not automatically retry this save.",
             **context,
         )
     saved_through(_LAST_SAVE["write_revision"])
-    return skill_success("Scene saved", save_status="saved", **context)
+    return skill_success(
+        f"Scene saved to {actual}",
+        save_status="saved",
+        verified=True,
+        postcondition={"method": "finished_operator_matching_scene_path_nonempty_file"},
+        prompt="Save operator, scene path and nonempty file verified. Reopen separately when content integrity must be established.",
+        **context,
+    )
 
 
 def guard_before_replacement():
@@ -335,7 +434,7 @@ def observe_external_save(filepath, before_stamp, operator_status):
             write_revision=current_revision(),
             confirmable=can_confirm_save(),
         )
-        if "FINISHED" not in status:
+        if status != ["FINISHED"]:
             return skill_error(
                 "External save did not finish", "save_incomplete", save_status="unknown", operator_status=status
             )

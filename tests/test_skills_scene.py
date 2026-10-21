@@ -154,11 +154,19 @@ class TestSaveScene:
 
 
 class TestOpenScene:
-    def test_opens_blend_file(self):
+    def test_opens_blend_file(self, tmp_path):
+        path = tmp_path / "scene.blend"
+        path.write_bytes(b"saved scene")
         bpy = make_mock_bpy()
-        result = load_and_call("blender-scene/scripts/open_scene.py", bpy, filepath="/path/to/scene.blend")
+
+        def load(**kwargs):
+            bpy.data.filepath = kwargs["filepath"]
+            return {"FINISHED"}
+
+        bpy.ops.wm.open_mainfile.side_effect = load
+        result = load_and_call("blender-scene/scripts/open_scene.py", bpy, filepath=str(path))
         assert result["success"] is True
-        bpy.ops.wm.open_mainfile.assert_called_once_with(filepath="/path/to/scene.blend")
+        bpy.ops.wm.open_mainfile.assert_called_once_with(filepath=str(path), load_ui=False)
 
 
 class TestGetSceneInfo:

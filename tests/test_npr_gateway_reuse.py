@@ -24,7 +24,7 @@ def test_shared_gateway_is_reused(tmp_path):
             binary_sha256=c["binary_sha256"],
             build=c["expected_build"],
             background=False,
-            adapter="0.2.21",
+            adapter=launcher().VERSIONS["adapter"],
             core="0.20.45",
             server="0.20.45",
         )
@@ -47,14 +47,14 @@ def test_shared_registry_reaches_cli_environment(tmp_path):
 
 def test_closed_instance_status_accepts_null_instance(tmp_path):
     _, config = config_file(tmp_path)
-    work = Path(config['work_dir'])
+    work = Path(config["work_dir"])
     work.mkdir()
-    config['base_url'] = 'http://127.0.0.1:9765'
-    (work / 'config.json').write_text(json.dumps(config))
-    (work / 'host.json').write_text(json.dumps({'instance_id': 'closed-instance'}))
+    config["base_url"] = "http://127.0.0.1:9765"
+    (work / "config.json").write_text(json.dumps(config))
+    (work / "host.json").write_text(json.dumps({"instance_id": "closed-instance"}))
     module = launcher()
-    with patch.object(module, 'cli_run', return_value={'ready': False, 'instance': None}):
+    with patch.object(module, "cli_run", return_value={"ready": False, "instance": None}):
         result = module.status(work)
-    assert result['ready'] is False
-    assert result['instance_id'] == 'closed-instance'
-    assert result['observation']['instance'] is None
+    assert result["ready"] is False
+    assert result["instance_id"] == "closed-instance"
+    assert result["observation"]["instance"] is None

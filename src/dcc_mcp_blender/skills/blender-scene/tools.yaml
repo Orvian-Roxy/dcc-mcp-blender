@@ -55,7 +55,7 @@ tools:
       read_only_hint: false
       destructive_hint: false
       idempotent_hint: true
-      open_world_hint: false
+      open_world_hint: true
   - name: open_scene
     description: "Open a Blender scene file (.blend) from disk"
     source_file: scripts/open_scene.py

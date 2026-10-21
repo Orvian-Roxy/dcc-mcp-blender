@@ -31,7 +31,14 @@ from pathlib import Path
 
 import tomllib
 
-VERSIONS = {"adapter": "0.2.21", "core": "0.20.45", "server": "0.20.45", "cli": "0.20.45"}
+VERSIONS = {
+    "adapter": tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())["project"][
+        "version"
+    ],
+    "core": "0.20.45",
+    "server": "0.20.45",
+    "cli": "0.20.45",
+}
 
 
 def validated(config):
